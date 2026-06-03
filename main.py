@@ -5,13 +5,14 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
 load_dotenv()
 
-DEPLOY_TIME = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+_EDT = timezone(timedelta(hours=-4))
+DEPLOY_TIME = datetime.now(_EDT).strftime("%Y-%m-%d %H:%M EDT")
 
 # Ensure the scanner logger emits at INFO level regardless of uvicorn's root config
 _scanner_log = logging.getLogger("scanner")
