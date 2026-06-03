@@ -261,6 +261,41 @@ def compute_atr_5m(df_5m: pd.DataFrame) -> float:
     return float(val.iloc[-1]) if not val.empty else 0.0
 
 
+# ── Gate status (for dots display and closest-pair ranking) ───────────────────
+
+def compute_gates_status(
+    trend: str, adx_1h: float,
+    bid_pct: float, ask_pct: float,
+    j5: float,
+) -> dict:
+    """Per-gate pass/fail for the strongest direction. Uses raw (unbounded) j5."""
+    if trend == "Strong Bear":
+        direction = "SHORT"
+    elif trend == "Strong Bull":
+        direction = "LONG"
+    else:
+        return {"gates_direction": "NONE", "trend_pass": False, "adx_pass": False,
+                "depth_pass": False, "j_pass": False, "gates_passing": 0}
+
+    adx_pass = adx_1h >= TC_ADX_MIN
+    if direction == "LONG":
+        depth_pass = bid_pct >= 55.0
+        j_pass = j5 < (45.0 if adx_1h >= 60 else 20.0)
+    else:
+        depth_pass = ask_pct >= 55.0
+        j_pass = j5 > (55.0 if adx_1h >= 60 else 80.0)
+
+    gates_passing = 1 + int(adx_pass) + int(depth_pass) + int(j_pass)
+    return {
+        "gates_direction": direction,
+        "trend_pass": True,
+        "adx_pass": adx_pass,
+        "depth_pass": depth_pass,
+        "j_pass": j_pass,
+        "gates_passing": gates_passing,
+    }
+
+
 # ── Scoring ───────────────────────────────────────────────────────────────────
 
 def score_tc_long(
@@ -445,6 +480,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "ma60": round(ma60, 4),
         "alerts": alerts,
         "signal_state": _get_signal_state(symbol),
+        "gates_status": compute_gates_status(trend, adx_1h, bid_pct, ask_pct, j5),
         "scanned_at": int(time.time()),
     }
 
