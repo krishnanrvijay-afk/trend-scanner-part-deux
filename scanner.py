@@ -1,3 +1,4 @@
+import logging
 import time
 import asyncio
 from typing import Optional
@@ -5,15 +6,28 @@ import numpy as np
 import pandas as pd
 
 from config import (
-    PAIRS, TC_MIN_SCORE, TC_ADX_MIN, J5_LONG_GATE, J5_SHORT_GATE,
-    COOLDOWN_MINUTES,
+    PAIRS, ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
+    DEPTH_GATE_PCT, J5_LONG_GATE, J5_SHORT_GATE,
+    MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE,
+    COOLDOWN_MINUTES, PAPER_MODE,
 )
 from hl_client import HLClient
+
+logger = logging.getLogger("scanner")
 
 # ── Consecutive-scan confirmation state ──────────────────────────────────────
 _prev_scores: dict[str, int] = {}
 _cooldowns: dict[str, float] = {}
 _pending: dict[str, dict] = {}
+
+logger.info(
+    "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_LONG=%s | ADX_SHORT=%s"
+    " | DEPTH=%s%% | J_LONG<%s | J_SHORT>%s"
+    " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
+    ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN, TC_ADX_MIN,
+    DEPTH_GATE_PCT, J5_LONG_GATE, J5_SHORT_GATE,
+    MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
+)
 
 
 def _in_cooldown(key: str) -> bool:
