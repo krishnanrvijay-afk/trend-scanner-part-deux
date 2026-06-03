@@ -129,7 +129,7 @@
       display: grid;
       grid-template-columns: 1fr 360px;
       gap: 0;
-      height: calc(100vh - 57px);
+      height: calc(100vh - 90px);
     }
 
     /* ── Pair table ──────────────────────────────────────────── */
@@ -373,6 +373,94 @@
     .cap-yellow { background: var(--yellow); }
     .cap-red    { background: var(--red); }
 
+    /* ── Scan pulse strip ───────────────────────────────────── */
+    .scan-pulse-strip {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 5px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #444444;
+      flex-shrink: 0;
+      transition: none;
+    }
+    .pulse-dot.flash {
+      animation: scan-flash 1s ease-out forwards;
+    }
+    @keyframes scan-flash {
+      0%   { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
+      100% { background: #444444; box-shadow: none; }
+    }
+
+    /* ── Gate dots ───────────────────────────────────────────── */
+    .gate-dots {
+      display: inline-flex;
+      gap: 3px;
+      align-items: center;
+      justify-content: center;
+      cursor: default;
+    }
+    .gate-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── Market snapshot panel ───────────────────────────────── */
+    .snapshot-panel {
+      border-top: 1px solid var(--border);
+      background: #111111;
+    }
+    .snapshot-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 14px;
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #ffffff;
+      user-select: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .snapshot-header:hover { background: var(--surface2); }
+    .snapshot-chevron { font-size: 10px; color: var(--muted); }
+    .snapshot-body { padding: 12px 14px; }
+    .snapshot-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 20px;
+    }
+    .snapshot-section { display: flex; flex-direction: column; gap: 5px; }
+    .snap-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #ffffff;
+      margin-bottom: 3px;
+    }
+    .snap-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+    .snap-key {
+      font-size: 9px;
+      color: #ffffff;
+      min-width: 48px;
+      flex-shrink: 0;
+    }
+
     /* ── Error toast ─────────────────────────────────────────── */
     #toast {
       position: fixed;
@@ -499,6 +587,22 @@
   </div>
 </header>
 
+<!-- Scan pulse strip -->
+<div class="scan-pulse-strip">
+  <span class="pulse-dot" id="pulse-dot"></span>
+  <span>
+    <span style="color:#ffffff">SCAN</span>&nbsp;<span id="pulse-scan-num" style="color:#00ff88;font-weight:bold">—</span>
+    <span style="color:#444444;margin:0 5px">·</span>
+    <span id="pulse-ago" style="color:#ffaa00;font-weight:bold">—</span>
+    <span style="color:#444444;margin:0 5px">·</span>
+    <span style="color:#ffffff">12 pairs</span>
+    <span style="color:#444444;margin:0 5px">·</span>
+    <span id="pulse-signals" style="color:#00ff88;font-weight:bold">—</span>&nbsp;<span style="color:#ffffff">signals</span>
+    <span style="color:#444444;margin:0 5px">·</span>
+    <span id="pulse-closest"><span style="color:#444444">scanning…</span></span>
+  </span>
+</div>
+
 <!-- Main -->
 <div class="main">
 
@@ -514,13 +618,25 @@
           <th>J</th>
           <th>B%</th>
           <th>S%</th>
+          <th style="text-align:center">Gates</th>
           <th>Signal</th>
         </tr>
       </thead>
       <tbody id="pair-tbody">
-        <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
+        <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
       </tbody>
     </table>
+
+    <!-- Market Snapshot Panel -->
+    <div class="snapshot-panel" id="snapshot-panel">
+      <div class="snapshot-header" onclick="toggleSnapshot()">
+        <span>MARKET SNAPSHOT</span>
+        <span class="snapshot-chevron" id="snapshot-chevron">▶</span>
+      </div>
+      <div class="snapshot-body" id="snapshot-body" style="display:none">
+        <div class="snapshot-grid" id="snapshot-content"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Alerts panel -->
