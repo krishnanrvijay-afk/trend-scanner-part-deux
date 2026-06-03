@@ -359,18 +359,17 @@ function renderAlerts() {
     html += `<span class="alert-time">${relTime(alert.fired_at)}</span>`;
 
     if (!inTrade) {
-      const disabled = capReached ? 'disabled title="Margin cap reached"' : '';
-      html += `
-        <button class="pill pill-open" ${disabled}
-          onclick="openTrade('${alert.symbol}', '${alert.direction}')">
-          ▶ OPEN TRADE
-        </button>`;
+      const autoInfo = (state.auto_pending || {})[key];
+      if (autoInfo) {
+        const remaining = Math.max(0, Math.ceil(autoInfo.fire_at - Date.now() / 1000));
+        const label = remaining > 0 ? `AUTO IN ${remaining}s` : 'OPENING…';
+        html += `<button class="pill pill-open" style="background:#ffaa00;color:#000;cursor:default;min-width:100px" data-auto-key="${key}">${label}</button>`;
+      } else {
+        const disabled = capReached ? 'disabled title="Margin cap reached"' : '';
+        html += `<button class="pill pill-open" ${disabled} onclick="openTrade('${alert.symbol}', '${alert.direction}')">▶ OPEN TRADE</button>`;
+      }
     } else {
-      html += `
-        <button class="pill pill-close"
-          onclick="closeTrade('${alert.symbol}', '${alert.direction}')">
-          ■ CLOSE TRADE
-        </button>`;
+      html += `<button class="pill pill-close" onclick="closeTrade('${alert.symbol}', '${alert.direction}')">■ CLOSE TRADE</button>`;
     }
 
     html += `</div></div>`; // footer + card
@@ -386,6 +385,77 @@ function renderAll() {
   renderHeader();
   renderPairTable();
   renderAlerts();
+  renderTradeLog();
+}
+
+// ── Trade log render ──────────────────────────────────────────────────────────
+
+function renderTradeLog() {
+  const container = document.getElementById('tradelog-container');
+  if (!container || !state) return;
+  const log = (state.trade_log || []).slice().reverse();
+
+  if (log.length === 0) {
+    container.innerHTML = '<div class="log-empty">No completed trades yet.</div>';
+    return;
+  }
+
+  let html = '<div class="log-scroll"><table class="log-table"><thead><tr>'
+    + '<th>TIME</th><th>SYMBOL</th><th>DIR</th><th>SCORE</th>'
+    + '<th>ENTRY</th><th>EXIT</th><th>REASON</th><th>PNL</th><th>R</th><th>DUR</th>'
+    + '</tr></thead><tbody>';
+
+  for (const t of log) {
+    const dt = new Date(t.timestamp_closed * 1000);
+    const timeStr = dt.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    const pnlColor = (t.pnl_usd ?? 0) >= 0 ? '#00ff88' : '#ff4444';
+    const rColor   = (t.r_value  ?? 0) >= 0 ? '#00ff88' : '#ff4444';
+    const pnlSign  = (t.pnl_usd ?? 0) >= 0 ? '+' : '';
+    const rSign    = (t.r_value  ?? 0) >= 0 ? '+' : '';
+    const dur      = t.duration_seconds < 60
+      ? `${t.duration_seconds}s`
+      : `${Math.floor(t.duration_seconds / 60)}m${t.duration_seconds % 60}s`;
+    const dirClass = t.direction === 'LONG' ? 'dir-long' : 'dir-short';
+
+    html += `<tr>
+      <td style="color:var(--muted);font-size:10px">${timeStr}</td>
+      <td class="sym">${t.symbol}</td>
+      <td><span class="dir-pill ${dirClass}" style="font-size:9px;padding:2px 5px">${t.direction}</span></td>
+      <td style="text-align:right">${t.score ?? '—'}</td>
+      <td style="text-align:right">${fmtPrice(t.entry_price)}</td>
+      <td style="text-align:right">${fmtPrice(t.exit_price)}</td>
+      <td style="font-size:10px;color:var(--muted)">${t.exit_reason}</td>
+      <td style="color:${pnlColor};font-weight:bold;text-align:right">${pnlSign}$${fmt(t.pnl_usd, 2)}</td>
+      <td style="color:${rColor};text-align:right">${rSign}${fmt(t.r_value, 2)}R</td>
+      <td style="color:var(--muted);font-size:10px">${dur}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+async function clearTradeLog() {
+  const btn = document.getElementById('clear-log-btn');
+  try {
+    await fetch('/api/tradelog', { method: 'DELETE' });
+    if (btn) {
+      btn.textContent = '✓ CLEARED';
+      btn.style.background = 'rgba(0,255,136,0.15)';
+      btn.style.borderColor = 'rgba(0,255,136,0.4)';
+      btn.style.color = '#00ff88';
+      setTimeout(() => {
+        btn.textContent = '✕ CLEAR LOG';
+        btn.style.background = '';
+        btn.style.borderColor = '';
+        btn.style.color = '';
+      }, 1500);
+    }
+    await fetchState();
+    renderAll();
+  } catch (e) {
+    showToast('Error clearing log');
+  }
 }
 
 // ── Poll loop ─────────────────────────────────────────────────────────────────
