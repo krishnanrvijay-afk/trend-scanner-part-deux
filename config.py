@@ -1,4 +1,6 @@
-PAIRS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "SUI", "NEAR", "OP", "APT", "LINK"]
+import os
+
+PAIRS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "SUI", "NEAR", "OP", "APT", "LINK", "ZEC"]
 
 SCAN_INTERVAL_SECONDS = 10
 PRICE_INTERVAL_SECONDS = 1
@@ -15,7 +17,7 @@ MARGIN_HARD_CAP_USDC = 2500
 DEFAULT_MARGIN_USDC = 700
 DEFAULT_LEVERAGE = 10
 
-PAPER_MODE = True
+PAPER_MODE = os.getenv("PAPER_MODE", "true").strip().lower() != "false"
 
 SESSION_BONUSES = {
     "EU": 0.5,
