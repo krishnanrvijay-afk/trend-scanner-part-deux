@@ -34,7 +34,7 @@ from config import (
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
 )
 from hl_client import HLClient
-from scanner import run_full_scan, get_pending
+from scanner import run_full_scan, get_pending, set_close_cooldown, reset_scan_counter
 
 # ── App state ─────────────────────────────────────────────────────────────────
 
@@ -111,6 +111,16 @@ class AppState:
 
 app_state = AppState()
 hl_client: Optional[HLClient] = None
+
+
+# ── Alert retirement ──────────────────────────────────────────────────────────
+
+def _retire_alert(symbol: str, direction: str):
+    """Remove the originating alert when its trade fully closes. Prevents resurrection."""
+    app_state.alerts = [
+        a for a in app_state.alerts
+        if not (a["symbol"] == symbol and a["direction"] == direction)
+    ]
 
 
 # ── Trade log helper ──────────────────────────────────────────────────────────
@@ -267,9 +277,9 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
 
         app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
         del app_state.open_trades[key]
-        for a in app_state.alerts:
-            if a["symbol"] == sym and a["direction"] == direction:
-                a["is_in_trade"] = False
+        _retire_alert(sym, direction)
+        set_close_cooldown(sym, direction)
+        reset_scan_counter(sym, direction)
         print(f"[auto-exit] {sym} {direction} {reason} at {close_price:.4f}, PnL=${pnl:.2f}, R={r}")
 
 
@@ -463,10 +473,9 @@ async def close_trade(req: CloseTradeRequest):
     app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
     closed_trade = {**trade, "close_price": close_price, "final_pnl": round(pnl, 2)}
     del app_state.open_trades[key]
-
-    for a in app_state.alerts:
-        if a["symbol"] == req.symbol and a["direction"] == req.direction:
-            a["is_in_trade"] = False
+    _retire_alert(req.symbol, req.direction)
+    set_close_cooldown(req.symbol, req.direction)
+    reset_scan_counter(req.symbol, req.direction)
 
     return {"status": "ok", "closed": closed_trade}
 
