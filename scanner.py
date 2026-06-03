@@ -328,11 +328,24 @@ def score_tc_long(
             return 0
 
     score = 2  # P1 + P2 free (guaranteed by gates)
-    if ma10 > ma30 > ma60: score += 1                          # P3
-    if rsi_5m < 40 and rsi_5m > rsi_5m_prev: score += 1       # P4
-    if rsi_1h > 50: score += 1                                 # P5
-    if vol_ma10 > 0 and last_vol > 1.5 * vol_ma10: score += 1 # P6
-    score += 1                                                  # P7 free
+    p3 = int(ma10 > ma30 > ma60)
+    p4 = int(rsi_5m < 40 and rsi_5m > rsi_5m_prev)
+    p5 = int(rsi_1h > 50)
+    p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
+    score += p3 + p4 + p5 + p6
+    score += 1  # P7 free
+
+    if score < TC_MIN_SCORE:
+        reasons = []
+        if not p3: reasons.append("P3 ma not aligned bull")
+        if not p4: reasons.append("P4 rsi_5m not rising from oversold")
+        if not p5: reasons.append("P5 rsi_1h below 50")
+        if not p6: reasons.append("P6 volume not spiking")
+        logger.info(
+            "[SCORE DETAIL] %s LONG gates=PASS score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
+            symbol, score, p3, p4, p5, p6, " ".join(reasons),
+        )
+
     return score
 
 
@@ -366,11 +379,24 @@ def score_tc_short(
             return 0
 
     score = 2  # P1 + P2 free
-    if ma10 < ma30 < ma60: score += 1                          # P3
-    if rsi_5m > 60 and rsi_5m < rsi_5m_prev: score += 1       # P4
-    if rsi_1h < 50: score += 1                                 # P5
-    if vol_ma10 > 0 and last_vol > 1.5 * vol_ma10: score += 1 # P6
-    score += 1                                                  # P7 free
+    p3 = int(ma10 < ma30 < ma60)
+    p4 = int(rsi_5m > 60 and rsi_5m < rsi_5m_prev)
+    p5 = int(rsi_1h < 50)
+    p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
+    score += p3 + p4 + p5 + p6
+    score += 1  # P7 free
+
+    if score < TC_MIN_SCORE:
+        reasons = []
+        if not p3: reasons.append("P3 ma not aligned bear")
+        if not p4: reasons.append("P4 rsi_5m not falling from overbought")
+        if not p5: reasons.append("P5 rsi_1h above 50")
+        if not p6: reasons.append("P6 volume not spiking")
+        logger.info(
+            "[SCORE DETAIL] %s SHORT gates=PASS score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
+            symbol, score, p3, p4, p5, p6, " ".join(reasons),
+        )
+
     return score
 
 
