@@ -7,7 +7,7 @@ import pandas as pd
 
 from config import (
     PAIRS, ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
-    DEPTH_GATE_PCT, J5_LONG_GATE, J5_SHORT_GATE,
+    DEPTH_GATE_PCT,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE,
     COOLDOWN_MINUTES, PAPER_MODE,
 )
@@ -24,7 +24,7 @@ CONFIRMED_SHOW_SECONDS = 30
 
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_LONG=%s | ADX_SHORT=%s"
-    " | DEPTH=%s%% | J_SHORT>80(ADX<60)/>55(ADX>=60) | J_LONG<20(ADX<60)/<45(ADX>=60)"
+    " | DEPTH=%s%% | J=display_only"
     " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
     ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN, TC_ADX_MIN,
     DEPTH_GATE_PCT,
@@ -168,8 +168,7 @@ def compute_stoch_kdj(df: pd.DataFrame, k_period: int = 9, d_period: int = 3, sm
     # Clamp K and D to [0, 100] before computing J
     k_val = max(0.0, min(100.0, float(smooth_k_series.iloc[-1]))) if pd.notna(smooth_k_series.iloc[-1]) else 50.0
     d_val = max(0.0, min(100.0, float(d_series.iloc[-1]))) if pd.notna(d_series.iloc[-1]) else 50.0
-    # J is intentionally unbounded (raw KDJ convention); gate logic uses raw J,
-    # display layer clamps to [0, 100]
+    # J is intentionally unbounded (raw KDJ convention); displayed in pair table for reference only
     j_val = 3 * k_val - 2 * d_val
 
     return k_val, d_val, j_val
@@ -264,16 +263,11 @@ def score_tc_long(
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
     last_vol: float, vol_ma10: float,
-    bid_pct: float, j5: float,
+    bid_pct: float,
 ) -> int:
     if trend != "Strong Bull": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if bid_pct < 55.0: return 0
-    j5_long_thr = 45 if adx_1h >= 60 else J5_LONG_GATE
-    if j5 >= j5_long_thr: return 0
-    if adx_1h >= 60 and j5 >= J5_LONG_GATE:
-        logger.info("[GATE] %s LONG relaxed J gate applied (ADX=%.1f J=%.1f threshold=45)",
-                    symbol, adx_1h, j5)
 
     score = 2  # P1 + P2 free (guaranteed by gates)
     if ma10 > ma30 > ma60: score += 1                          # P3
@@ -290,43 +284,11 @@ def score_tc_short(
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
     last_vol: float, vol_ma10: float,
-    ask_pct: float, j5: float,
+    ask_pct: float,
 ) -> int:
-    # ── Diagnostic verbose logging (SOL and APT only) ──────────────────────
-    if symbol in ("SOL", "APT"):
-        _trend_ok = trend == "Strong Bear"
-        _adx_ok   = adx_1h >= TC_ADX_MIN
-        _ask_ok   = ask_pct >= 55.0
-        _j_thr    = 55 if adx_1h >= 60 else J5_SHORT_GATE
-        _j_label  = "relaxed" if adx_1h >= 60 else "strict"
-        _j_ok     = j5 > _j_thr
-        _dbg_score = 0
-        if _trend_ok and _adx_ok and _ask_ok and _j_ok:
-            _dbg_score = 2
-            if ma10 < ma30 < ma60:                              _dbg_score += 1
-            if rsi_5m > 60 and rsi_5m < rsi_5m_prev:           _dbg_score += 1
-            if rsi_1h < 50:                                     _dbg_score += 1
-            if vol_ma10 > 0 and last_vol > 1.5 * vol_ma10:     _dbg_score += 1
-            _dbg_score += 1
-        logger.info(
-            "[DEBUG %s SHORT] trend=%s %s | adx=%.1f >= %s %s"
-            " | ask_pct=%.1f >= 55 %s | j_threshold=%s (%s) j5=%.1f > %s %s | score=%s",
-            symbol,
-            trend,    "PASS" if _trend_ok else "FAIL",
-            adx_1h, TC_ADX_MIN, "PASS" if _adx_ok else "FAIL",
-            ask_pct,  "PASS" if _ask_ok else "FAIL",
-            _j_thr, _j_label, j5, _j_thr, "PASS" if _j_ok else "FAIL",
-            _dbg_score,
-        )
-    # ──────────────────────────────────────────────────────────────────────
     if trend != "Strong Bear": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if ask_pct < 55.0: return 0
-    j5_short_thr = 55 if adx_1h >= 60 else J5_SHORT_GATE
-    if j5 <= j5_short_thr: return 0
-    if adx_1h >= 60 and j5 <= J5_SHORT_GATE:
-        logger.info("[GATE] %s SHORT relaxed J gate applied (ADX=%.1f J=%.1f threshold=55)",
-                    symbol, adx_1h, j5)
 
     score = 2  # P1 + P2 free
     if ma10 < ma30 < ma60: score += 1                          # P3
@@ -395,12 +357,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     long_score = score_tc_long(
         symbol, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
-        last_vol, vol_ma10, bid_pct, j5
+        last_vol, vol_ma10, bid_pct,
     )
     short_score = score_tc_short(
         symbol, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
-        last_vol, vol_ma10, ask_pct, j5
+        last_vol, vol_ma10, ask_pct,
     )
     logger.info("[SCORE] %s LONG=%s SHORT=%s | trend=%s adx=%.1f j5=%.1f bid=%.1f ask=%.1f",
                 symbol, long_score, short_score, trend, adx_1h, j5, bid_pct, ask_pct)
