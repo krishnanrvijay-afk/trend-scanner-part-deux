@@ -34,7 +34,7 @@ from config import (
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
 )
 from hl_client import HLClient
-from scanner import run_full_scan, get_pending, set_close_cooldown, reset_scan_counter
+from scanner import run_full_scan, get_pending, set_close_cooldown, reset_scan_counter, get_cooldown_remaining
 
 # ── App state ─────────────────────────────────────────────────────────────────
 
@@ -87,8 +87,18 @@ class AppState:
                 "elapsed_s": int(time.time()) - t.get("opened_at", int(time.time())),
             }
 
+        # Augment each pair state with live cooldown remaining (computed at request time)
+        pair_states_out = []
+        for ps in self.pair_states:
+            sym = ps.get("symbol", "")
+            cd = max(
+                get_cooldown_remaining(sym, "LONG"),
+                get_cooldown_remaining(sym, "SHORT"),
+            )
+            pair_states_out.append({**ps, "cooldown_remaining_seconds": cd if cd > 0 else None})
+
         return {
-            "pair_states": self.pair_states,
+            "pair_states": pair_states_out,
             "alerts": self.alerts,
             "pending_alerts": get_pending(),
             "prices": self.prices,
