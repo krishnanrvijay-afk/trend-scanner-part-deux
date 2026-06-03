@@ -45,6 +45,11 @@ function scoreClass(n) {
   return 'score-low';
 }
 
+function rsiColor(v) {
+  if (v == null || isNaN(v)) return '#ffffff';
+  return v <= 35 ? '#00ff88' : v >= 65 ? '#ff4444' : '#ffffff';
+}
+
 function showToast(msg, duration = 4000) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -403,6 +408,10 @@ function renderAlerts() {
             <span class="ag-val ${isLong ? 'trend-bull' : 'trend-bear'}">${p.trend}</span>
           </div>
           <div class="ag-row">
+            <span class="ag-label">RSI 5m · 1h</span>
+            <span class="ag-val"><span style="color:${rsiColor(p.rsi_5m)};font-weight:bold">${fmt(p.rsi_5m ?? 50, 1)}</span><span style="color:var(--muted)"> · </span><span style="color:${rsiColor(p.rsi_1h)};font-weight:bold">${fmt(p.rsi_1h ?? 50, 1)}</span></span>
+          </div>
+          <div class="ag-row">
             <span class="ag-label">First seen</span>
             <span class="ag-val" style="color:var(--muted)">${relTime(p.first_seen)}</span>
           </div>
@@ -506,6 +515,10 @@ function renderAlerts() {
       <div class="ag-row">
         <span class="ag-label">Trend</span>
         <span class="ag-val ${isLong ? 'trend-bull' : 'trend-bear'}">${alert.trend}</span>
+      </div>
+      <div class="ag-row">
+        <span class="ag-label">RSI 5m · 1h</span>
+        <span class="ag-val"><span style="color:${rsiColor(alert.rsi_5m)};font-weight:bold">${fmt(alert.rsi_5m ?? 50, 1)}</span><span style="color:var(--muted)"> · </span><span style="color:${rsiColor(alert.rsi_1h)};font-weight:bold">${fmt(alert.rsi_1h ?? 50, 1)}</span></span>
       </div>
     </div>`;
 
