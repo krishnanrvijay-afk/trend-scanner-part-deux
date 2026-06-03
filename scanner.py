@@ -56,6 +56,21 @@ def get_pending() -> list[dict]:
     return list(_pending.values())
 
 
+def set_close_cooldown(symbol: str, direction: str):
+    """Called by main.py when a trade fully closes — starts a fresh 30-min cooldown."""
+    key = f"{symbol}{direction}"
+    _set_cooldown(key)
+    logger.info("[COOLDOWN] %s %s cooldown set for %s min on trade close", symbol, direction, COOLDOWN_MINUTES)
+
+
+def reset_scan_counter(symbol: str, direction: str):
+    """Called by main.py when a trade fully closes — resets consecutive-scan confirmation state."""
+    key = f"{symbol}{direction}"
+    _prev_scores[key] = 0
+    _pending.pop(key, None)
+    logger.info("[RESET] %s %s scan counter reset on trade close", symbol, direction)
+
+
 # ── Pure-pandas indicator helpers ─────────────────────────────────────────────
 
 def _wilder_smooth(series: pd.Series, period: int) -> pd.Series:
