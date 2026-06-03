@@ -24,10 +24,10 @@ CONFIRMED_SHOW_SECONDS = 30
 
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_LONG=%s | ADX_SHORT=%s"
-    " | DEPTH=%s%% | J_LONG<%s | J_SHORT>%s"
+    " | DEPTH=%s%% | J_SHORT>80(ADX<60)/>55(ADX>=60) | J_LONG<20(ADX<60)/<45(ADX>=60)"
     " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
     ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN, TC_ADX_MIN,
-    DEPTH_GATE_PCT, J5_LONG_GATE, J5_SHORT_GATE,
+    DEPTH_GATE_PCT,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
 )
 
@@ -244,6 +244,7 @@ def compute_atr_5m(df_5m: pd.DataFrame) -> float:
 # ── Scoring ───────────────────────────────────────────────────────────────────
 
 def score_tc_long(
+    symbol: str,
     trend: str, adx_1h: float,
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
@@ -253,7 +254,11 @@ def score_tc_long(
     if trend != "Strong Bull": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if bid_pct < 55.0: return 0
-    if j5 >= J5_LONG_GATE: return 0
+    j5_long_thr = 45 if adx_1h >= 60 else J5_LONG_GATE
+    if j5 >= j5_long_thr: return 0
+    if adx_1h >= 60 and j5 >= J5_LONG_GATE:
+        logger.info("[GATE] %s LONG relaxed J gate applied (ADX=%.1f J=%.1f threshold=45)",
+                    symbol, adx_1h, j5)
 
     score = 2  # P1 + P2 free (guaranteed by gates)
     if ma10 > ma30 > ma60: score += 1                          # P3
@@ -265,6 +270,7 @@ def score_tc_long(
 
 
 def score_tc_short(
+    symbol: str,
     trend: str, adx_1h: float,
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
@@ -274,7 +280,11 @@ def score_tc_short(
     if trend != "Strong Bear": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if ask_pct < 55.0: return 0
-    if j5 <= J5_SHORT_GATE: return 0
+    j5_short_thr = 55 if adx_1h >= 60 else J5_SHORT_GATE
+    if j5 <= j5_short_thr: return 0
+    if adx_1h >= 60 and j5 <= J5_SHORT_GATE:
+        logger.info("[GATE] %s SHORT relaxed J gate applied (ADX=%.1f J=%.1f threshold=55)",
+                    symbol, adx_1h, j5)
 
     score = 2  # P1 + P2 free
     if ma10 < ma30 < ma60: score += 1                          # P3
@@ -341,12 +351,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     atr = compute_atr_5m(df_5m)
 
     long_score = score_tc_long(
-        trend, adx_1h, ma10, ma30, ma60,
+        symbol, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
         last_vol, vol_ma10, bid_pct, j5
     )
     short_score = score_tc_short(
-        trend, adx_1h, ma10, ma30, ma60,
+        symbol, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
         last_vol, vol_ma10, ask_pct, j5
     )
