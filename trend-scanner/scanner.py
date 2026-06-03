@@ -48,8 +48,10 @@ def _in_cooldown(key: str) -> bool:
     return time.time() < _cooldowns.get(key, 0)
 
 
-def _set_cooldown(key: str):
-    _cooldowns[key] = time.time() + COOLDOWN_MINUTES * 60
+def _set_cooldown(key: str, reason: str = "UNKNOWN"):
+    duration = int(COOLDOWN_MINUTES * 60)
+    _cooldowns[key] = time.time() + duration
+    logger.info("[COOLDOWN] %s cooldown started — reason=%s duration=%ss", key, reason, duration)
 
 
 def _get_signal_state(symbol: str) -> str:
@@ -75,10 +77,9 @@ def get_cooldown_remaining(symbol: str, direction: str) -> int:
 
 
 def set_close_cooldown(symbol: str, direction: str):
-    """Called by main.py when a trade fully closes — starts a fresh 30-min cooldown."""
+    """Called by main.py when a trade fully closes — the ONLY place cooldown is started."""
     key = f"{symbol}{direction}"
-    _set_cooldown(key)
-    logger.info("[COOLDOWN] %s %s cooldown set for %s min on trade close", symbol, direction, COOLDOWN_MINUTES)
+    _set_cooldown(key, reason="TRADE_CLOSE")
 
 
 def reset_scan_counter(symbol: str, direction: str):
@@ -514,7 +515,6 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "fired_at": int(time.time()),
                 })
                 _pending.pop(key, None)
-                _set_cooldown(key)
                 _confirmed_at[key] = time.time()
             else:
                 # First qualifying scan → mark as pending (awaiting reconfirmation)
