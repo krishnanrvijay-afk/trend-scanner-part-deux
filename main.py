@@ -101,6 +101,57 @@ class AppState:
         pair_order = {sym: i for i, sym in enumerate(PAIRS)}
         pair_states_out.sort(key=lambda ps: pair_order.get(ps.get("symbol", ""), 999))
 
+        # Closest pair: most gates passing (1–3) without all 4 (not yet triggered)
+        closest_pair = None
+        max_gates = -1
+        for ps in pair_states_out:
+            gs = ps.get("gates_status", {})
+            gp = gs.get("gates_passing", 0)
+            if 0 < gp < 4 and gp > max_gates:
+                max_gates = gp
+                closest_pair = {
+                    "symbol": ps["symbol"],
+                    "direction": gs.get("gates_direction", "NONE"),
+                    "gates_passing": gp,
+                }
+
+        # Market snapshot — categorise each pair across four dimensions
+        trend_bias     = {"strong_bull": [], "strong_bear": [], "neutral": []}
+        adx_bands      = {"strong": [], "moderate": [], "weak": []}
+        momentum_bands = {"overbought": [], "neutral_j": [], "oversold": []}
+        depth_bias     = {"ask_dominant": [], "bid_dominant": [], "balanced": []}
+
+        for ps in pair_states_out:
+            sym = ps.get("symbol", "")
+            adx = ps.get("adx", 0)
+            j5  = ps.get("j5", 50)   # clamped [0,100] from scan_pair
+            bid = ps.get("bid_pct", 0)
+            ask = ps.get("ask_pct", 0)
+            trd = ps.get("trend", "Neutral")
+
+            if trd == "Strong Bull":   trend_bias["strong_bull"].append(sym)
+            elif trd == "Strong Bear": trend_bias["strong_bear"].append(sym)
+            else:                      trend_bias["neutral"].append(sym)
+
+            if adx >= 60:   adx_bands["strong"].append(sym)
+            elif adx >= 30: adx_bands["moderate"].append(sym)
+            else:           adx_bands["weak"].append(sym)
+
+            if j5 >= 80:   momentum_bands["overbought"].append(sym)
+            elif j5 <= 20: momentum_bands["oversold"].append(sym)
+            else:          momentum_bands["neutral_j"].append(sym)
+
+            if ask >= 55:   depth_bias["ask_dominant"].append(sym)
+            elif bid >= 55: depth_bias["bid_dominant"].append(sym)
+            else:           depth_bias["balanced"].append(sym)
+
+        market_snapshot = {
+            "trend_bias":     trend_bias,
+            "adx_bands":      adx_bands,
+            "momentum_bands": momentum_bands,
+            "depth_bias":     depth_bias,
+        }
+
         return {
             "pair_states": pair_states_out,
             "alerts": self.alerts,
@@ -120,6 +171,8 @@ class AppState:
             "deploy_time": DEPLOY_TIME,
             "auto_pending": self.auto_pending,
             "trade_log": self.trade_log,
+            "closest_pair": closest_pair,
+            "market_snapshot": market_snapshot,
         }
 
 
