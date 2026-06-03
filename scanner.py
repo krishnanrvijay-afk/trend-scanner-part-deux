@@ -56,6 +56,12 @@ def get_pending() -> list[dict]:
     return list(_pending.values())
 
 
+def get_cooldown_remaining(symbol: str, direction: str) -> int:
+    """Returns seconds remaining in cooldown for this symbol-direction (0 if expired or not set)."""
+    expires = _cooldowns.get(f"{symbol}{direction}", 0)
+    return max(0, int(expires - time.time()))
+
+
 def set_close_cooldown(symbol: str, direction: str):
     """Called by main.py when a trade fully closes — starts a fresh 30-min cooldown."""
     key = f"{symbol}{direction}"
