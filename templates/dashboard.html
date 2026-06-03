@@ -391,6 +391,71 @@
       text-align: center;
     }
     #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Trade log ───────────────────────────────────────────── */
+    .log-panel {
+      margin: 0 20px 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .log-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      color: var(--muted);
+    }
+    .pill-download {
+      background: rgba(0,255,136,.12);
+      border: 1px solid rgba(0,255,136,.3);
+      color: #00ff88;
+      cursor: pointer;
+    }
+    .pill-clear {
+      background: rgba(255,68,68,.1);
+      border: 1px solid rgba(255,68,68,.3);
+      color: var(--red);
+      cursor: pointer;
+    }
+    .log-empty {
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .log-scroll {
+      overflow-x: auto;
+    }
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    .log-table th {
+      padding: 7px 10px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .log-table td {
+      padding: 7px 10px;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      white-space: nowrap;
+    }
+    .log-table tbody tr:last-child td { border-bottom: none; }
+    .log-table tbody tr:hover { background: var(--surface2); }
   </style>
 </head>
 <body>
@@ -469,6 +534,20 @@
     </div>
   </div>
 
+</div>
+
+<!-- Trade Log -->
+<div class="log-panel">
+  <div class="log-header">
+    <span class="log-title">TRADE LOG</span>
+    <div style="display:flex;gap:8px">
+      <a href="/api/tradelog/csv" class="pill pill-download" style="text-decoration:none">↓ CSV</a>
+      <button id="clear-log-btn" class="pill pill-clear" onclick="clearTradeLog()">✕ CLEAR LOG</button>
+    </div>
+  </div>
+  <div id="tradelog-container">
+    <div class="log-empty">No completed trades yet.</div>
+  </div>
 </div>
 
 <!-- Error toast -->
