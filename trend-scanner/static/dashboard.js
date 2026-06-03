@@ -228,8 +228,8 @@ function buildPairRowHtml(p, promotedEntry) {
 
   const adxColor = adx >= 30 ? '#00ff88' : '#666666';
   const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
-  const bidColor = bid >= 55 ? '#00ff88' : '#ffffff';
-  const askColor = ask >= 55 ? '#ff4444' : '#ffffff';
+  const bidColor = bid >= 60 ? '#00ff88' : '#ffffff';
+  const askColor = ask >= 60 ? '#ff4444' : '#ffffff';
 
   const symHtml = promotedEntry
     ? `<span class="slot-badge">S${promotedEntry.slot_number}</span><span class="sym">${p.symbol}</span>`
@@ -278,7 +278,7 @@ function buildPairRowHtml(p, promotedEntry) {
     <td class="${trendClass}">${trendLabel}</td>
     <td class="price-cell">${fmtPrice(livePrice)}</td>
     <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
-    <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
+    <td style="color:${j5Color};text-align:right">${j5 > 100 ? '100+' : j5 < 0 ? '0-' : fmt(j5, 1)}</td>
     <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
     <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
     <td style="text-align:center">${gatesCell}</td>
