@@ -336,6 +336,8 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         rsi_5m, rsi_5m_prev, rsi_1h,
         last_vol, vol_ma10, ask_pct, j5
     )
+    logger.info("[SCORE] %s LONG=%s SHORT=%s | trend=%s adx=%.1f j5=%.1f bid=%.1f ask=%.1f",
+                symbol, long_score, short_score, trend, adx_1h, j5, bid_pct, ask_pct)
 
     alerts = []
     for direction, score in [("LONG", long_score), ("SHORT", short_score)]:
