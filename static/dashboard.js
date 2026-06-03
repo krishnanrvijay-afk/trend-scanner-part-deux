@@ -129,6 +129,12 @@ function renderHeader() {
   if (lastScan) {
     document.getElementById('scan-ago').textContent = relTime(lastScan);
   }
+
+  const deployEl = document.getElementById('deploy-time');
+  if (deployEl && state.deploy_time && !deployEl.dataset.set) {
+    deployEl.textContent = 'DEPLOYED ' + state.deploy_time;
+    deployEl.dataset.set = '1';
+  }
 }
 
 // ── Pair table render ─────────────────────────────────────────────────────────
@@ -234,7 +240,7 @@ function renderAlerts() {
             <span class="alert-sym">${p.symbol}</span>
             <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${p.direction}</span>
           </div>
-          <div class="alert-score">Score <span>${p.score}/7</span> · ADX ${fmt(p.adx, 1)}</div>
+          <div class="alert-score">Score <span>${p.score}/7</span> · ADX <span style="color:${p.adx >= 30 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
         </div>
         <div class="alert-grid">
           <div class="ag-row">
@@ -276,10 +282,11 @@ function renderAlerts() {
 
       // Live PnL row
       const pnl = trade.unrealized_pnl ?? 0;
-      const pnlClass = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+      const pnlColor = pnl >= 0 ? '#00ff88' : '#ff4444';
       const pnlSign = pnl >= 0 ? '+' : '';
       const r = trade.r ?? 0;
-      const rClass = r >= 0 ? 'pnl-pos' : 'pnl-neg';
+      const rColor = r >= 0 ? '#00ff88' : '#ff4444';
+      const rSign = r >= 0 ? '+' : '';
       const currentPrice = (state.prices && state.prices[alert.symbol]) || trade.current_price;
 
       html += `
@@ -294,7 +301,7 @@ function renderAlerts() {
           </div>
           <div class="ag-row">
             <span class="ag-label">PnL / R</span>
-            <span class="ag-val ${pnlClass}">${pnlSign}$${fmt(pnl, 2)} <span style="font-size:10px;color:var(--muted)">${pnlSign}${fmt(r, 2)}R</span></span>
+            <span class="ag-val"><span style="color:${pnlColor}">${pnlSign}$${fmt(pnl, 2)}</span> <span style="font-size:10px;color:${rColor}">${rSign}${fmt(r, 2)}R</span></span>
           </div>
         </div>`;
     }
@@ -306,7 +313,7 @@ function renderAlerts() {
           <span class="alert-sym">${alert.symbol}</span>
           <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${alert.direction}</span>
         </div>
-        <div class="alert-score">Score <span>${alert.score}/7</span> · ADX ${fmt(alert.adx, 1)}</div>
+        <div class="alert-score">Score <span>${alert.score}/7</span> · ADX <span style="color:${alert.adx >= 30 ? '#00ff88' : '#666666'}">${fmt(alert.adx, 1)}</span></div>
       </div>`;
 
     // Info grid
