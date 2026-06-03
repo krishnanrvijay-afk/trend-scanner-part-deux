@@ -97,6 +97,10 @@ class AppState:
             )
             pair_states_out.append({**ps, "cooldown_remaining_seconds": cd if cd > 0 else None})
 
+        # Sort to match PAIRS config order so the display order is always stable
+        pair_order = {sym: i for i, sym in enumerate(PAIRS)}
+        pair_states_out.sort(key=lambda ps: pair_order.get(ps.get("symbol", ""), 999))
+
         return {
             "pair_states": pair_states_out,
             "alerts": self.alerts,
