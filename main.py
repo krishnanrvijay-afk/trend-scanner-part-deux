@@ -18,7 +18,7 @@ from config import (
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
 )
 from hl_client import HLClient
-from scanner import run_full_scan
+from scanner import run_full_scan, get_pending
 
 # ── App state ────────────────────────────────────────────────────────────────
 
@@ -75,6 +75,7 @@ class AppState:
         return {
             "pair_states": self.pair_states,
             "alerts": self.alerts,
+            "pending_alerts": get_pending(),
             "prices": self.prices,
             "open_trades": trades_serialised,
             "account": {
