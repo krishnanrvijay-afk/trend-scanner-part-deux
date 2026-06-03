@@ -195,6 +195,20 @@ def _retire_alert(symbol: str, direction: str):
     ]
 
 
+# ── R value helper ────────────────────────────────────────────────────────────
+
+def _calc_r(entry: float, close: float, direction: str, sl_dist) -> float:
+    """Pure price-ratio R.
+    SL exit  → −1.0 exactly.  TP1 exit (1.5× sl) → +1.5.  TP2 exit (2.0× sl) → +2.0.
+    Dollar PnL should satisfy: pnl ≈ r × dollar_risk  (where dollar_risk = margin × lev × sl_pct%)."""
+    d = float(sl_dist) if sl_dist else 0.0
+    if d <= 0:
+        return 0.0
+    if direction == "LONG":
+        return round((close - entry) / d, 2)
+    return round((entry - close) / d, 2)
+
+
 # ── Trade log helper ──────────────────────────────────────────────────────────
 
 def _append_trade_log(trade: dict, exit_price: float, reason: str, pnl: float, r: float):
@@ -247,11 +261,12 @@ async def _do_open_trade(
         "leverage": leverage,
         "opened_at": int(time.time()),
         "paper": result.get("paper", True),
-        "sl_price": alert_data["sl_price"] if alert_data else None,
-        "sl_pct": alert_data["sl_pct"] if alert_data else None,
+        "sl_price":    alert_data["sl_price"]    if alert_data else None,
+        "sl_pct":      alert_data["sl_pct"]      if alert_data else None,
+        "sl_distance": alert_data.get("sl_distance") if alert_data else None,
         "dollar_risk": alert_data["dollar_risk"] if alert_data else None,
-        "tp1_price": alert_data["tp1_price"] if alert_data else None,
-        "tp2_price": alert_data["tp2_price"] if alert_data else None,
+        "tp1_price":   alert_data["tp1_price"]   if alert_data else None,
+        "tp2_price":   alert_data["tp2_price"]   if alert_data else None,
         "score": alert_data.get("score") if alert_data else None,
         "adx": alert_data.get("adx") if alert_data else None,
         "tp1_hit": False,
@@ -260,6 +275,13 @@ async def _do_open_trade(
     app_state.open_trades[key] = trade
     app_state.margin_deployed += margin_usdc
     app_state.trades_opened += 1
+
+    sl_d = trade.get("sl_distance") or (entry * 0.01)
+    print(
+        f"[TRADE] {symbol} {direction} entry={entry:.6f} "
+        f"sl_distance={sl_d:.6f} sl_price={trade.get('sl_price', 0):.6f} "
+        f"risk_pct={trade.get('sl_pct', 1):.2f}% dollar_risk=${trade.get('dollar_risk', 0):.2f}"
+    )
 
     for a in app_state.alerts:
         if a["symbol"] == symbol and a["direction"] == direction:
@@ -327,10 +349,12 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
     entry = trade["entry_price"]
     dollar_risk = trade.get("dollar_risk") or (trade["margin"] * (trade.get("sl_pct", 1) / 100))
 
+    sl_dist = trade.get("sl_distance") or 0
+
     if reason == "TP1_PARTIAL":
         half = trade.get("remaining_size", trade["size"]) / 2
         pnl = ((close_price - entry) if direction == "LONG" else (entry - close_price)) * half
-        r = round(pnl / (dollar_risk / 2), 2) if dollar_risk else 0
+        r = _calc_r(entry, close_price, direction, sl_dist)
         _append_trade_log(trade, close_price, "TP1_PARTIAL", pnl, r)
 
         trade["tp1_hit"] = True
@@ -338,21 +362,32 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
         trade["size"] = half
         trade["sl_price"] = entry
         app_state.open_trades[key] = trade
-        print(f"[auto-exit] {sym} {direction} TP1 at {close_price:.4f} — partial, SL→entry {entry:.4f}, PnL=${pnl:.2f}")
+        print(f"[auto-exit] {sym} {direction} TP1 at {close_price:.4f} — partial, SL→entry {entry:.4f}, PnL=${pnl:.2f}, R={r:+.2f}")
 
     else:
         remaining = trade.get("remaining_size", trade["size"])
         pnl = ((close_price - entry) if direction == "LONG" else (entry - close_price)) * remaining
-        r_basis = (dollar_risk / 2) if trade.get("tp1_hit") else dollar_risk
-        r = round(pnl / r_basis, 2) if r_basis else 0
+        r = _calc_r(entry, close_price, direction, sl_dist)
         _append_trade_log(trade, close_price, reason, pnl, r)
+
+        # Post-close validation: pnl should ≈ r × dollar_risk (full or half position)
+        size_factor = 0.5 if trade.get("tp1_hit") else 1.0
+        expected_pnl = r * dollar_risk * size_factor if dollar_risk else None
+        if expected_pnl is not None:
+            diff_pct = abs(pnl - expected_pnl) / (abs(expected_pnl) + 0.01) * 100
+            consistent = "YES" if diff_pct < 10 else f"NO (diff={diff_pct:.1f}%)"
+        else:
+            consistent = "N/A"
+        print(
+            f"[TRADE CLOSE] {sym} {direction} exit={reason} pnl=${pnl:.2f} r={r:+.2f} "
+            f"sl_pct={trade.get('sl_pct', 0):.2f}% expected_1R=${dollar_risk:.2f} consistent={consistent}"
+        )
 
         app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
         del app_state.open_trades[key]
         _retire_alert(sym, direction)
         set_close_cooldown(sym, direction)
         reset_scan_counter(sym, direction)
-        print(f"[auto-exit] {sym} {direction} {reason} at {close_price:.4f}, PnL=${pnl:.2f}, R={r}")
 
 
 # ── Background tasks ──────────────────────────────────────────────────────────
@@ -551,10 +586,22 @@ async def close_trade(req: CloseTradeRequest):
     else:
         pnl = (entry - close_price) * remaining
 
-    dollar_risk = trade.get("dollar_risk") or (trade["margin"] * (trade.get("sl_pct", 1) / 100))
-    r_basis = (dollar_risk / 2) if trade.get("tp1_hit") else dollar_risk
-    r = round(pnl / r_basis, 2) if r_basis else 0
+    dollar_risk = trade.get("dollar_risk") or (trade["margin"] * trade["leverage"] * (trade.get("sl_pct", 1) / 100))
+    sl_dist = trade.get("sl_distance") or 0
+    r = _calc_r(entry, close_price, req.direction, sl_dist)
     _append_trade_log(trade, close_price, "MANUAL", pnl, r)
+
+    size_factor = 0.5 if trade.get("tp1_hit") else 1.0
+    expected_pnl = r * dollar_risk * size_factor if dollar_risk else None
+    if expected_pnl is not None:
+        diff_pct = abs(pnl - expected_pnl) / (abs(expected_pnl) + 0.01) * 100
+        consistent = "YES" if diff_pct < 10 else f"NO (diff={diff_pct:.1f}%)"
+    else:
+        consistent = "N/A"
+    print(
+        f"[TRADE CLOSE] {req.symbol} {req.direction} exit=MANUAL pnl=${pnl:.2f} r={r:+.2f} "
+        f"sl_pct={trade.get('sl_pct', 0):.2f}% expected_1R=${dollar_risk:.2f} consistent={consistent}"
+    )
 
     app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
     closed_trade = {**trade, "close_price": close_price, "final_pnl": round(pnl, 2)}
