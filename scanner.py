@@ -277,6 +277,33 @@ def score_tc_short(
     last_vol: float, vol_ma10: float,
     ask_pct: float, j5: float,
 ) -> int:
+    # ── Diagnostic verbose logging (SOL and APT only) ──────────────────────
+    if symbol in ("SOL", "APT"):
+        _trend_ok = trend == "Strong Bear"
+        _adx_ok   = adx_1h >= TC_ADX_MIN
+        _ask_ok   = ask_pct >= 55.0
+        _j_thr    = 55 if adx_1h >= 60 else J5_SHORT_GATE
+        _j_label  = "relaxed" if adx_1h >= 60 else "strict"
+        _j_ok     = j5 > _j_thr
+        _dbg_score = 0
+        if _trend_ok and _adx_ok and _ask_ok and _j_ok:
+            _dbg_score = 2
+            if ma10 < ma30 < ma60:                              _dbg_score += 1
+            if rsi_5m > 60 and rsi_5m < rsi_5m_prev:           _dbg_score += 1
+            if rsi_1h < 50:                                     _dbg_score += 1
+            if vol_ma10 > 0 and last_vol > 1.5 * vol_ma10:     _dbg_score += 1
+            _dbg_score += 1
+        logger.info(
+            "[DEBUG %s SHORT] trend=%s %s | adx=%.1f >= %s %s"
+            " | ask_pct=%.1f >= 55 %s | j_threshold=%s (%s) j5=%.1f > %s %s | score=%s",
+            symbol,
+            trend,    "PASS" if _trend_ok else "FAIL",
+            adx_1h, TC_ADX_MIN, "PASS" if _adx_ok else "FAIL",
+            ask_pct,  "PASS" if _ask_ok else "FAIL",
+            _j_thr, _j_label, j5, _j_thr, "PASS" if _j_ok else "FAIL",
+            _dbg_score,
+        )
+    # ──────────────────────────────────────────────────────────────────────
     if trend != "Strong Bear": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if ask_pct < 55.0: return 0
