@@ -1,0 +1,679 @@
+/* Trend Scanner Part Deux — dashboard.js */
+
+let state = null;
+let lastScanCount = -1;
+const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+
+function fmt(n, dec = 2) {
+  if (n == null || isNaN(n)) return '—';
+  return Number(n).toLocaleString('en-US', {
+    minimumFractionDigits: dec,
+    maximumFractionDigits: dec,
+  });
+}
+
+function fmtPrice(n) {
+  if (n == null || isNaN(n)) return '—';
+  const v = Number(n);
+  if (v >= 1000) return fmt(v, 2);
+  if (v >= 1)    return fmt(v, 4);
+  return fmt(v, 6);
+}
+
+function relTime(ts) {
+  if (!ts) return '';
+  const secs = Math.floor(Date.now() / 1000) - ts;
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m ago`;
+}
+
+function elapsed(ts) {
+  if (!ts) return '—';
+  const secs = Math.floor(Date.now() / 1000) - ts;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}m ${s}s`;
+}
+
+function scoreClass(n) {
+  if (n >= 6) return 'score-high';
+  if (n >= 4) return 'score-med';
+  return 'score-low';
+}
+
+function rsiColor(v) {
+  if (v == null || isNaN(v)) return '#ffffff';
+  return v <= 35 ? '#00ff88' : v >= 65 ? '#ff4444' : '#ffffff';
+}
+
+function showToast(msg, duration = 4000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+// ── API calls ──────────────────────────────────────────────────────────────────
+
+async function openTrade(symbol, direction) {
+  try {
+    const res = await fetch('/api/trade/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol, direction }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.detail || 'Failed to open trade');
+      return;
+    }
+    await fetchState();
+    renderAll();
+  } catch (e) {
+    showToast('Network error: ' + e.message);
+  }
+}
+
+async function closeTrade(symbol, direction) {
+  try {
+    const res = await fetch('/api/trade/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol, direction }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.detail || 'Failed to close trade');
+      return;
+    }
+    // Immediately retire the card from local state — don't wait for the next poll
+    if (state) {
+      state.alerts = (state.alerts || []).filter(
+        a => !(a.symbol === symbol && a.direction === direction)
+      );
+      const key = `${symbol}${direction}`;
+      if (state.open_trades) delete state.open_trades[key];
+    }
+    renderAlerts();
+    await fetchState();
+    renderAll();
+  } catch (e) {
+    showToast('Network error: ' + e.message);
+  }
+}
+
+// ── Fetch state ───────────────────────────────────────────────────────────────
+
+async function fetchState() {
+  try {
+    const res = await fetch('/api/state');
+    if (!res.ok) return;
+    state = await res.json();
+    // Resync local cooldown end-times from server so the countdown stays accurate
+    const nowSec = Date.now() / 1000;
+    for (const p of (state.pair_states || [])) {
+      const cd = p.cooldown_remaining_seconds;
+      if (cd > 0) {
+        cooldownEndsAt[p.symbol] = nowSec + cd;
+      } else {
+        delete cooldownEndsAt[p.symbol];
+      }
+    }
+  } catch (e) {
+    // silently ignore network hiccups
+  }
+}
+
+// ── Header render ─────────────────────────────────────────────────────────────
+
+function renderHeader() {
+  if (!state) return;
+  const acc = state.account || {};
+  const pct = acc.cap_pct || 0;
+
+  document.getElementById('margin-deployed').textContent =
+    `${fmt(acc.margin_deployed, 0)} / ${fmt(acc.cap, 0)} USDC`;
+
+  document.getElementById('trade-count').textContent =
+    `${acc.trades_opened ?? 0} opened`;
+
+  const pctLabel = document.getElementById('cap-pct-label');
+  pctLabel.textContent = `${fmt(pct, 1)}%`;
+  if (pct >= 90)       pctLabel.style.color = 'var(--red)';
+  else if (pct >= 70)  pctLabel.style.color = 'var(--yellow)';
+  else                 pctLabel.style.color = 'var(--text)';
+
+  const bar = document.getElementById('cap-bar');
+  bar.style.width = Math.min(pct, 100) + '%';
+  bar.className = 'cap-bar-fill ' + (pct >= 90 ? 'cap-red' : pct >= 70 ? 'cap-yellow' : 'cap-green');
+
+  const lastScan = state.last_scan_at;
+  if (lastScan) {
+    document.getElementById('scan-ago').textContent = relTime(lastScan);
+  }
+
+  const deployEl = document.getElementById('deploy-time');
+  if (deployEl && state.deploy_time && !deployEl.dataset.set) {
+    deployEl.textContent = 'DEPLOYED ' + state.deploy_time;
+    deployEl.dataset.set = '1';
+  }
+}
+
+// ── Scan pulse strip render ───────────────────────────────────────────────────
+
+function renderScanPulse() {
+  if (!state) return;
+  const scanCount = state.scan_count ?? 0;
+  const lastScan  = state.last_scan_at;
+  const signals   = (state.alerts || []).length;
+  const cp        = state.closest_pair;
+
+  const numEl = document.getElementById('pulse-scan-num');
+  if (numEl) numEl.textContent = `#${scanCount}`;
+
+  const agoEl = document.getElementById('pulse-ago');
+  if (agoEl && lastScan) {
+    const secs = Math.max(0, Math.floor(Date.now() / 1000) - lastScan);
+    agoEl.textContent = `${secs}s ago`;
+  }
+
+  const sigEl = document.getElementById('pulse-signals');
+  if (sigEl) sigEl.textContent = signals;
+
+  const cpEl = document.getElementById('pulse-closest');
+  if (cpEl) {
+    if (cp && cp.gates_passing > 0) {
+      const dirColor = cp.direction === 'LONG' ? '#00ff88' : '#ff4444';
+      cpEl.innerHTML =
+        `<span style="color:#ffffff">closest:</span> ` +
+        `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
+        `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4 gates)</span>`;
+    } else {
+      cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
+    }
+  }
+
+  // Flash pulse dot when scan_count increments
+  if (lastScanCount !== -1 && scanCount !== lastScanCount) {
+    const dot = document.getElementById('pulse-dot');
+    if (dot) {
+      dot.classList.remove('flash');
+      void dot.offsetWidth; // force reflow to restart CSS animation
+      dot.classList.add('flash');
+    }
+  }
+  lastScanCount = scanCount;
+}
+
+// ── Pair table render ─────────────────────────────────────────────────────────
+// Rows are updated in-place by data-symbol to preserve insertion order.
+// Server returns pairs pre-sorted to match config.py PAIRS order.
+
+function buildPairRowHtml(p, promotedEntry) {
+  const trendClass = p.trend === 'Strong Bull' ? 'trend-bull'
+    : p.trend === 'Strong Bear' ? 'trend-bear' : 'trend-neu';
+  const trendLabel = p.trend === 'Strong Bull' ? '▲ S.Bull'
+    : p.trend === 'Strong Bear' ? '▼ S.Bear' : '— Neutral';
+
+  const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
+  const adx = p.adx  ?? 0;
+  const j5  = p.j5   ?? 50;
+  const bid = p.bid_pct ?? 0;
+  const ask = p.ask_pct ?? 0;
+
+  const adxColor = adx >= 30 ? '#00ff88' : '#666666';
+  const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
+  const bidColor = bid >= 55 ? '#00ff88' : '#ffffff';
+  const askColor = ask >= 55 ? '#ff4444' : '#ffffff';
+
+  const symHtml = promotedEntry
+    ? `<span class="slot-badge">S${promotedEntry.slot_number}</span><span class="sym">${p.symbol}</span>`
+    : `<span class="sym">${p.symbol}</span>`;
+
+  const cdSecs = cooldownEndsAt[p.symbol]
+    ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
+    : 0;
+  let sigCell;
+  if (cdSecs > 0) {
+    const cdM = Math.floor(cdSecs / 60);
+    const cdS = cdSecs % 60;
+    sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m ${cdS < 10 ? '0' : ''}${cdS}s</span>`;
+  } else {
+    const sig = p.signal_state || 'none';
+    if (sig === 'confirmed') {
+      sigCell = '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>';
+    } else if (sig === 'pending') {
+      sigCell = '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>';
+    } else if (promotedEntry) {
+      const secsLeft = Math.max(0, (promotedEntry.rotation_expires_at || 0) - Math.floor(Date.now() / 1000));
+      const h = Math.floor(secsLeft / 3600);
+      const m = Math.floor((secsLeft % 3600) / 60);
+      sigCell = `<span style="color:#555;font-size:10px" title="Rotation expires">↻ ${h}h ${m}m</span>`;
+    } else {
+      sigCell = '';
+    }
+  }
+
+  const gs = p.gates_status || {};
+  const gatesList = [
+    { name: 'TREND', pass: gs.trend_pass },
+    { name: 'ADX',   pass: gs.adx_pass },
+    { name: 'DEPTH', pass: gs.depth_pass },
+    { name: 'J',     pass: gs.j_pass },
+  ];
+  const passingCount = gatesList.filter(g => g.pass).length;
+  const dotsHtml = gatesList.map(g => {
+    const color = g.pass ? '#00ff88' : (passingCount === 3 ? '#ffaa00' : '#444444');
+    return `<span class="gate-dot" style="background:${color}"></span>`;
+  }).join('');
+  const gatesCell = `<div class="gate-dots" title="TREND · ADX · DEPTH · J">${dotsHtml}</div>`;
+
+  return `<tr data-symbol="${p.symbol}">
+    <td>${symHtml}</td>
+    <td class="${trendClass}">${trendLabel}</td>
+    <td class="price-cell">${fmtPrice(livePrice)}</td>
+    <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
+    <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
+    <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
+    <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
+    <td style="text-align:center">${gatesCell}</td>
+    <td style="text-align:center">${sigCell}</td>
+  </tr>`;
+}
+
+function renderPairTable() {
+  if (!state) return;
+  const tbody = document.getElementById('pair-tbody');
+  const pairs = state.pair_states || [];
+  const promotedMap = {};
+  for (const pp of (state.promoted_pairs || [])) {
+    promotedMap[pp.symbol] = pp;
+  }
+
+  if (pairs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
+    return;
+  }
+
+  const fixedPairs = pairs.filter(p => !promotedMap[p.symbol]);
+  const promPairs  = pairs.filter(p =>  promotedMap[p.symbol]);
+
+  let html = '';
+  for (const p of fixedPairs) html += buildPairRowHtml(p, null);
+
+  html += `<tr class="promoted-divider"><td colspan="9">— PROMOTED —</td></tr>`;
+
+  if (promPairs.length === 0) {
+    html += `<tr><td colspan="9" style="text-align:center;color:#555;font-style:italic;padding:10px 12px;font-size:11px">No promoted pairs — market quiet</td></tr>`;
+  } else {
+    for (const p of promPairs) html += buildPairRowHtml(p, promotedMap[p.symbol]);
+  }
+
+  tbody.innerHTML = html;
+}
+
+// ── Market snapshot render ────────────────────────────────────────────────────
+
+function toggleSnapshot() {
+  const body    = document.getElementById('snapshot-body');
+  const chevron = document.getElementById('snapshot-chevron');
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  if (chevron) chevron.textContent = isOpen ? '▶' : '▼';
+}
+
+function renderMarketSnapshot() {
+  const content = document.getElementById('snapshot-content');
+  if (!content || !state) return;
+  const ms = state.market_snapshot;
+  if (!ms) return;
+
+  const tb = ms.trend_bias     || {};
+  const ab = ms.adx_bands      || {};
+  const mb = ms.momentum_bands || {};
+  const db = ms.depth_bias     || {};
+
+  function chips(arr, color) {
+    if (!arr || arr.length === 0)
+      return `<span style="color:#444444;font-size:10px">—</span>`;
+    return arr.map(s =>
+      `<span style="color:${color};font-weight:bold;font-size:10px">${s}</span>`
+    ).join(' ');
+  }
+
+  content.innerHTML = `
+    <div class="snapshot-section">
+      <div class="snap-label">Trend Bias</div>
+      <div class="snap-row"><span class="snap-key">Bull</span>${chips(tb.strong_bull, '#00ff88')}</div>
+      <div class="snap-row"><span class="snap-key">Bear</span>${chips(tb.strong_bear, '#ff4444')}</div>
+      <div class="snap-row"><span class="snap-key">Neutral</span>${chips(tb.neutral, '#ffaa00')}</div>
+    </div>
+    <div class="snapshot-section">
+      <div class="snap-label">ADX Strength</div>
+      <div class="snap-row"><span class="snap-key">≥60</span>${chips(ab.strong, '#00ff88')}</div>
+      <div class="snap-row"><span class="snap-key">30–59</span>${chips(ab.moderate, '#ffaa00')}</div>
+      <div class="snap-row"><span class="snap-key">&lt;30</span>${chips(ab.weak, '#666666')}</div>
+    </div>
+    <div class="snapshot-section">
+      <div class="snap-label">Momentum J</div>
+      <div class="snap-row"><span class="snap-key">OB ≥80</span>${chips(mb.overbought, '#ff4444')}</div>
+      <div class="snap-row"><span class="snap-key">Neutral</span>${chips(mb.neutral_j, '#ffffff')}</div>
+      <div class="snap-row"><span class="snap-key">OS ≤20</span>${chips(mb.oversold, '#00ff88')}</div>
+    </div>
+    <div class="snapshot-section">
+      <div class="snap-label">Depth Bias</div>
+      <div class="snap-row"><span class="snap-key">Ask ≥55%</span>${chips(db.ask_dominant, '#ff4444')}</div>
+      <div class="snap-row"><span class="snap-key">Bid ≥55%</span>${chips(db.bid_dominant, '#00ff88')}</div>
+      <div class="snap-row"><span class="snap-key">Balanced</span>${chips(db.balanced, '#ffffff')}</div>
+    </div>`;
+
+  // Universe section — spans full grid width
+  const us       = state.universe_state || {};
+  const promoted = state.promoted_pairs  || [];
+  const promChips = promoted.length > 0
+    ? promoted.map(pp =>
+        `<span style="color:#ffaa00;font-weight:bold;font-size:10px">S${pp.slot_number}:${pp.symbol}</span>`
+        + `&nbsp;<span style="color:#666;font-size:9px">(${pp.universe_score}/7)</span>`
+      ).join('&nbsp;&nbsp;')
+    : '<span style="color:#444;font-size:10px">—</span>';
+
+  content.innerHTML += `
+    <div class="snapshot-section" style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+      <div class="snap-label">Universe Scanner</div>
+      <div class="snap-row"><span class="snap-key">Last scan</span><span style="color:#ffffff;font-size:10px">${us.last_scan_at ? relTime(us.last_scan_at) : '—'}</span></div>
+      <div class="snap-row"><span class="snap-key">Coverage</span><span style="color:#ffffff;font-size:10px">${us.total_pairs_scanned ?? '—'} pairs scanned · ${us.pairs_surviving_filter ?? '—'} survive filter</span></div>
+      <div class="snap-row" style="flex-wrap:wrap;gap:6px"><span class="snap-key">Promoted</span>${promChips}</div>
+    </div>`;
+}
+
+// ── Alerts render ─────────────────────────────────────────────────────────────
+
+function renderAlerts() {
+  if (!state) return;
+  const container = document.getElementById('alerts-container');
+  const alerts = (state.alerts || []).slice().reverse(); // newest first
+  const pendings = (state.pending_alerts || []).slice().reverse();
+
+  // Filter out pendings that already have a confirmed alert
+  const confirmedKeys = new Set(alerts.map(a => `${a.symbol}${a.direction}`));
+  const visiblePendings = pendings.filter(p => !confirmedKeys.has(`${p.symbol}${p.direction}`));
+
+  if (alerts.length === 0 && visiblePendings.length === 0) {
+    container.innerHTML = `
+      <div class="alerts-empty">
+        Scanning every 10s.<br>Alerts appear here when<br>TC conditions are met twice.
+      </div>`;
+    return;
+  }
+
+  const acc = state.account || {};
+  const capReached = acc.cap_reached;
+  const openTrades = state.open_trades || {};
+
+  let html = '<div class="alerts-list">';
+
+  // ── Pending cards (amber, no OPEN pill) ──────────────────────────────────
+  for (const p of visiblePendings) {
+    const isLong = p.direction === 'LONG';
+    html += `
+      <div class="alert-card" style="border-left:3px solid #ffaa00;opacity:0.85">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <span style="
+            display:inline-flex;align-items:center;gap:6px;
+            padding:3px 8px;border-radius:4px;
+            background:rgba(255,170,0,0.12);border:1px solid rgba(255,170,0,0.4);
+            color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.06em;
+            animation:pending-pulse 1.4s infinite
+          ">● PENDING RECONFIRMATION</span>
+        </div>
+        <div class="alert-header-row">
+          <div class="alert-sig">
+            <span class="alert-sym">${p.symbol}</span>
+            <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${p.direction}</span>
+          </div>
+          <div class="alert-score">Score <span>${p.score}/7</span> · ADX <span style="color:${p.adx >= 30 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
+        </div>
+        <div class="alert-grid">
+          <div class="ag-row">
+            <span class="ag-label">Trend</span>
+            <span class="ag-val ${isLong ? 'trend-bull' : 'trend-bear'}">${p.trend}</span>
+          </div>
+          <div class="ag-row">
+            <span class="ag-label">RSI 5m · 1h</span>
+            <span class="ag-val"><span style="color:${rsiColor(p.rsi_5m)};font-weight:bold">${fmt(p.rsi_5m ?? 50, 1)}</span><span style="color:var(--muted)"> · </span><span style="color:${rsiColor(p.rsi_1h)};font-weight:bold">${fmt(p.rsi_1h ?? 50, 1)}</span></span>
+          </div>
+          <div class="ag-row">
+            <span class="ag-label">First seen</span>
+            <span class="ag-val" style="color:var(--muted)">${relTime(p.first_seen)}</span>
+          </div>
+        </div>
+        <div class="alert-footer">
+          <span class="alert-time" style="color:#ffaa00">Awaiting next scan…</span>
+        </div>
+      </div>`;
+  }
+
+  // ── Confirmed alert cards ─────────────────────────────────────────────────
+  for (const alert of alerts) {
+    const key = `${alert.symbol}${alert.direction}`;
+    const trade = openTrades[key];
+    const inTrade = !!trade;
+    const isLong = alert.direction === 'LONG';
+
+    const cardClass = inTrade
+      ? (isLong ? 'alert-card in-trade' : 'alert-card in-trade-short')
+      : 'alert-card';
+
+    html += `<div class="${cardClass}">`;
+
+    // IN TRADE badge
+    if (inTrade) {
+      const badgeClass = isLong ? 'in-trade-badge' : 'in-trade-badge short-badge';
+      html += `
+        <div class="${badgeClass}">
+          <span>● IN TRADE</span>
+          <span style="opacity:0.7">${elapsed(trade.opened_at)}</span>
+        </div>`;
+
+      // Live PnL row
+      const pnl = trade.unrealized_pnl ?? 0;
+      const pnlColor = pnl >= 0 ? '#00ff88' : '#ff4444';
+      const pnlSign = pnl >= 0 ? '+' : '';
+      const r = trade.r ?? 0;
+      const rColor = r >= 0 ? '#00ff88' : '#ff4444';
+      const rSign = r >= 0 ? '+' : '';
+      const currentPrice = (state.prices && state.prices[alert.symbol]) || trade.current_price;
+
+      html += `
+        <div class="live-row">
+          <div class="ag-row">
+            <span class="ag-label">Entry</span>
+            <span class="ag-val">${fmtPrice(trade.entry_price)}</span>
+          </div>
+          <div class="ag-row">
+            <span class="ag-label">Current</span>
+            <span class="ag-val">${fmtPrice(currentPrice)}</span>
+          </div>
+          <div class="ag-row">
+            <span class="ag-label">PnL / R</span>
+            <span class="ag-val"><span style="color:${pnlColor}">${pnlSign}$${fmt(pnl, 2)}</span> <span style="font-size:10px;color:${rColor}">${rSign}${fmt(r, 2)}R</span></span>
+          </div>
+        </div>`;
+    }
+
+    // Signal header row
+    html += `
+      <div class="alert-header-row">
+        <div class="alert-sig">
+          <span class="alert-sym">${alert.symbol}</span>
+          <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${alert.direction}</span>
+        </div>
+        <div class="alert-score">Score <span>${alert.score}/7</span> · ADX <span style="color:${alert.adx >= 30 ? '#00ff88' : '#666666'}">${fmt(alert.adx, 1)}</span></div>
+      </div>`;
+
+    // Info grid
+    html += `<div class="alert-grid">`;
+
+    if (!inTrade) {
+      html += `
+        <div class="ag-row">
+          <span class="ag-label">Entry Zone</span>
+          <span class="ag-val">${fmtPrice(alert.entry_price)}</span>
+        </div>
+        <div class="ag-row">
+          <span class="ag-label">Margin · Lev</span>
+          <span class="ag-val">${fmt(alert.margin, 0)} USDC · ${alert.leverage}x</span>
+        </div>`;
+    }
+
+    html += `
+      <div class="ag-row">
+        <span class="ag-label">SL</span>
+        <span class="ag-val sl-val">${fmtPrice(alert.sl_price)} <span style="font-size:10px">(${fmt(alert.sl_pct, 2)}%)</span></span>
+      </div>
+      <div class="ag-row">
+        <span class="ag-label">Dollar Risk</span>
+        <span class="ag-val sl-val">$${fmt(alert.dollar_risk, 2)}</span>
+      </div>
+      <div class="ag-row">
+        <span class="ag-label">TP1 (1.5R)</span>
+        <span class="ag-val tp1-val">${fmtPrice(alert.tp1_price)}</span>
+      </div>
+      <div class="ag-row">
+        <span class="ag-label">TP2 (2.0R)</span>
+        <span class="ag-val tp2-val">${fmtPrice(alert.tp2_price)}</span>
+      </div>
+      <div class="ag-row">
+        <span class="ag-label">Trend</span>
+        <span class="ag-val ${isLong ? 'trend-bull' : 'trend-bear'}">${alert.trend}</span>
+      </div>
+      <div class="ag-row">
+        <span class="ag-label">RSI 5m · 1h</span>
+        <span class="ag-val"><span style="color:${rsiColor(alert.rsi_5m)};font-weight:bold">${fmt(alert.rsi_5m ?? 50, 1)}</span><span style="color:var(--muted)"> · </span><span style="color:${rsiColor(alert.rsi_1h)};font-weight:bold">${fmt(alert.rsi_1h ?? 50, 1)}</span></span>
+      </div>
+    </div>`;
+
+    // Footer: timestamp + action pill
+    html += `<div class="alert-footer">`;
+    html += `<span class="alert-time">${relTime(alert.fired_at)}</span>`;
+
+    if (!inTrade) {
+      const autoInfo = (state.auto_pending || {})[key];
+      if (autoInfo) {
+        const remaining = Math.max(0, Math.ceil(autoInfo.fire_at - Date.now() / 1000));
+        const label = remaining > 0 ? `AUTO IN ${remaining}s` : 'OPENING…';
+        html += `<button class="pill pill-open" style="background:#ffaa00;color:#000;cursor:default;min-width:100px" data-auto-key="${key}">${label}</button>`;
+      } else {
+        const disabled = capReached ? 'disabled title="Margin cap reached"' : '';
+        html += `<button class="pill pill-open" ${disabled} onclick="openTrade('${alert.symbol}', '${alert.direction}')">▶ OPEN TRADE</button>`;
+      }
+    } else {
+      html += `<button class="pill pill-close" onclick="closeTrade('${alert.symbol}', '${alert.direction}')">■ CLOSE TRADE</button>`;
+    }
+
+    html += `</div></div>`; // footer + card
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// ── Render all ────────────────────────────────────────────────────────────────
+
+function renderAll() {
+  renderHeader();
+  renderScanPulse();
+  renderPairTable();
+  renderMarketSnapshot();
+  renderAlerts();
+  renderTradeLog();
+}
+
+// ── Trade log render ──────────────────────────────────────────────────────────
+
+function renderTradeLog() {
+  const container = document.getElementById('tradelog-container');
+  if (!container || !state) return;
+  const log = (state.trade_log || []).slice().reverse();
+
+  if (log.length === 0) {
+    container.innerHTML = '<div class="log-empty">No completed trades yet.</div>';
+    return;
+  }
+
+  let html = '<div class="log-scroll"><table class="log-table"><thead><tr>'
+    + '<th>TIME</th><th>SYMBOL</th><th>DIR</th><th>SCORE</th>'
+    + '<th>ENTRY</th><th>EXIT</th><th>REASON</th><th>PNL</th><th>R</th><th>DUR</th>'
+    + '</tr></thead><tbody>';
+
+  for (const t of log) {
+    const dt = new Date(t.timestamp_closed * 1000);
+    const timeStr = dt.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    const pnlColor = (t.pnl_usd ?? 0) >= 0 ? '#00ff88' : '#ff4444';
+    const rColor   = (t.r_value  ?? 0) >= 0 ? '#00ff88' : '#ff4444';
+    const pnlSign  = (t.pnl_usd ?? 0) >= 0 ? '+' : '';
+    const rSign    = (t.r_value  ?? 0) >= 0 ? '+' : '';
+    const dur      = t.duration_seconds < 60
+      ? `${t.duration_seconds}s`
+      : `${Math.floor(t.duration_seconds / 60)}m${t.duration_seconds % 60}s`;
+    const dirClass = t.direction === 'LONG' ? 'dir-long' : 'dir-short';
+
+    html += `<tr>
+      <td style="color:var(--muted);font-size:10px">${timeStr}</td>
+      <td class="sym">${t.symbol}</td>
+      <td><span class="dir-pill ${dirClass}" style="font-size:9px;padding:2px 5px">${t.direction}</span></td>
+      <td style="text-align:right">${t.score ?? '—'}</td>
+      <td style="text-align:right">${fmtPrice(t.entry_price)}</td>
+      <td style="text-align:right">${fmtPrice(t.exit_price)}</td>
+      <td style="font-size:10px;color:var(--muted)">${t.exit_reason}</td>
+      <td style="color:${pnlColor};font-weight:bold;text-align:right">${pnlSign}$${fmt(t.pnl_usd, 2)}</td>
+      <td style="color:${rColor};text-align:right">${rSign}${fmt(t.r_value, 2)}R</td>
+      <td style="color:var(--muted);font-size:10px">${dur}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+async function clearTradeLog() {
+  const btn = document.getElementById('clear-log-btn');
+  try {
+    await fetch('/api/tradelog', { method: 'DELETE' });
+    if (btn) {
+      btn.textContent = '✓ CLEARED';
+      btn.style.background = 'rgba(0,255,136,0.15)';
+      btn.style.borderColor = 'rgba(0,255,136,0.4)';
+      btn.style.color = '#00ff88';
+      setTimeout(() => {
+        btn.textContent = '✕ CLEAR LOG';
+        btn.style.background = '';
+        btn.style.borderColor = '';
+        btn.style.color = '';
+      }, 1500);
+    }
+    await fetchState();
+    renderAll();
+  } catch (e) {
+    showToast('Error clearing log');
+  }
+}
+
+// ── Poll loop ─────────────────────────────────────────────────────────────────
+
+async function poll() {
+  await fetchState();
+  renderAll();
+}
+
+// Initial load
+poll();
+
+// Price refresh every 1 second
+setInterval(poll, 1000);
