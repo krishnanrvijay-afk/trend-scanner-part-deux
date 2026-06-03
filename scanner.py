@@ -24,7 +24,7 @@ CONFIRMED_SHOW_SECONDS = 30
 
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_LONG=%s | ADX_SHORT=%s"
-    " | DEPTH=%s%% | J=display_only"
+    " | DEPTH=%s%% | J_SHORT>80(ADX<60)/>55(ADX>=60) | J_LONG<20(ADX<60)/<45(ADX>=60)"
     " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
     ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN, TC_ADX_MIN,
     DEPTH_GATE_PCT,
@@ -269,11 +269,19 @@ def score_tc_long(
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
     last_vol: float, vol_ma10: float,
-    bid_pct: float,
+    bid_pct: float, j5: float,
 ) -> int:
     if trend != "Strong Bull": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if bid_pct < 55.0: return 0
+
+    # J gate: tiered by ADX strength (relaxed when trend is very strong)
+    j5_long_thr = 45.0 if adx_1h >= 60 else 20.0
+    if j5 >= j5_long_thr:
+        return 0
+    if adx_1h >= 60:
+        logger.info("[GATE] %s LONG relaxed J gate applied (ADX=%.1f J=%.1f threshold=%.0f)",
+                    symbol, adx_1h, j5, j5_long_thr)
 
     score = 2  # P1 + P2 free (guaranteed by gates)
     if ma10 > ma30 > ma60: score += 1                          # P3
@@ -290,11 +298,19 @@ def score_tc_short(
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
     last_vol: float, vol_ma10: float,
-    ask_pct: float,
+    ask_pct: float, j5: float,
 ) -> int:
     if trend != "Strong Bear": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if ask_pct < 55.0: return 0
+
+    # J gate: tiered by ADX strength (relaxed when trend is very strong)
+    j5_short_thr = 55.0 if adx_1h >= 60 else 80.0
+    if j5 <= j5_short_thr:
+        return 0
+    if adx_1h >= 60:
+        logger.info("[GATE] %s SHORT relaxed J gate applied (ADX=%.1f J=%.1f threshold=%.0f)",
+                    symbol, adx_1h, j5, j5_short_thr)
 
     score = 2  # P1 + P2 free
     if ma10 < ma30 < ma60: score += 1                          # P3
@@ -363,12 +379,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     long_score = score_tc_long(
         symbol, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
-        last_vol, vol_ma10, bid_pct,
+        last_vol, vol_ma10, bid_pct, j5,
     )
     short_score = score_tc_short(
         symbol, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
-        last_vol, vol_ma10, ask_pct,
+        last_vol, vol_ma10, ask_pct, j5,
     )
     logger.info("[SCORE] %s LONG=%s SHORT=%s | trend=%s adx=%.1f j5=%.1f bid=%.1f ask=%.1f",
                 symbol, long_score, short_score, trend, adx_1h, j5, bid_pct, ask_pct)
