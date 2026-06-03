@@ -136,8 +136,11 @@ def compute_stoch_kdj(df: pd.DataFrame, k_period: int = 9, d_period: int = 3, sm
     smooth_k_series = raw_k.rolling(smooth_k).mean()
     d_series = smooth_k_series.rolling(d_period).mean()
 
-    k_val = float(smooth_k_series.iloc[-1]) if pd.notna(smooth_k_series.iloc[-1]) else 50.0
-    d_val = float(d_series.iloc[-1]) if pd.notna(d_series.iloc[-1]) else 50.0
+    # Clamp K and D to [0, 100] before computing J
+    k_val = max(0.0, min(100.0, float(smooth_k_series.iloc[-1]))) if pd.notna(smooth_k_series.iloc[-1]) else 50.0
+    d_val = max(0.0, min(100.0, float(d_series.iloc[-1]))) if pd.notna(d_series.iloc[-1]) else 50.0
+    # J is intentionally unbounded (raw KDJ convention); gate logic uses raw J,
+    # display layer clamps to [0, 100]
     j_val = 3 * k_val - 2 * d_val
 
     return k_val, d_val, j_val
@@ -379,7 +382,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "long_score": long_score,
         "short_score": short_score,
         "adx": round(adx_1h, 1),
-        "j5": round(j5, 1),
+        "j5": round(max(0.0, min(100.0, j5)), 1),
         "bid_pct": round(bid_pct, 1),
         "ask_pct": round(ask_pct, 1),
         "rsi_5m": round(rsi_5m, 1),
