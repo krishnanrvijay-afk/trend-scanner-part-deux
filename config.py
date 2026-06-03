@@ -1,6 +1,6 @@
 import os
 
-PAIRS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "SUI", "NEAR", "OP", "APT", "LINK", "ZEC"]
+PAIRS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "SUI", "NEAR", "OP", "APT", "LINK", "ZEC", "ARB"]
 
 SCAN_INTERVAL_SECONDS = 10
 PRICE_INTERVAL_SECONDS = 1
