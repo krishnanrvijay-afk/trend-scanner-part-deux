@@ -13,6 +13,7 @@ from hl_client import HLClient
 # ── Consecutive-scan confirmation state ──────────────────────────────────────
 _prev_scores: dict[str, int] = {}
 _cooldowns: dict[str, float] = {}
+_pending: dict[str, dict] = {}
 
 
 def _in_cooldown(key: str) -> bool:
@@ -21,6 +22,10 @@ def _in_cooldown(key: str) -> bool:
 
 def _set_cooldown(key: str):
     _cooldowns[key] = time.time() + COOLDOWN_MINUTES * 60
+
+
+def get_pending() -> list[dict]:
+    return list(_pending.values())
 
 
 # ── Pure-pandas indicator helpers ─────────────────────────────────────────────
@@ -321,6 +326,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         if score >= TC_MIN_SCORE:
             prev = _prev_scores.get(key, 0)
             if prev >= TC_MIN_SCORE and not _in_cooldown(key):
+                # Second consecutive qualifying scan → emit full alert
                 entry_price = price
                 sl_tp = calc_sl_tp(entry_price, direction, atr, 700)
                 alerts.append({
@@ -335,10 +341,22 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     **sl_tp,
                     "fired_at": int(time.time()),
                 })
+                _pending.pop(key, None)
                 _set_cooldown(key)
+            else:
+                # First qualifying scan → mark as pending (awaiting reconfirmation)
+                _pending[key] = {
+                    "symbol": symbol,
+                    "direction": direction,
+                    "score": score,
+                    "trend": trend,
+                    "adx": round(adx_1h, 1),
+                    "first_seen": int(time.time()),
+                }
             _prev_scores[key] = score
         else:
             _prev_scores[key] = 0
+            _pending.pop(key, None)
 
     return {
         "symbol": symbol,
