@@ -25,6 +25,6 @@ SESSION_BONUSES = {
     "ASIA": 0.0,
 }
 
-COOLDOWN_MINUTES = 90
+COOLDOWN_MINUTES = 30
 
 HL_API_URL = "https://api.hyperliquid.xyz/info"
