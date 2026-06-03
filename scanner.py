@@ -23,10 +23,10 @@ _confirmed_at: dict[str, float] = {}
 CONFIRMED_SHOW_SECONDS = 30
 
 logger.info(
-    "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_LONG=%s | ADX_SHORT=%s"
-    " | DEPTH=%s%% | J_SHORT>80(ADX<60)/>55(ADX>=60) | J_LONG<20(ADX<60)/<45(ADX>=60)"
+    "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_MIN=%s"
+    " | DEPTH=%s%% | J_SHORT>80(ADX<50)/>55or<45(ADX>=50) | J_LONG<20(ADX<50)/<45or>55(ADX>=50)"
     " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
-    ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN, TC_ADX_MIN,
+    ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
     DEPTH_GATE_PCT,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
 )
@@ -280,10 +280,10 @@ def compute_gates_status(
     adx_pass = adx_1h >= TC_ADX_MIN
     if direction == "LONG":
         depth_pass = bid_pct >= 55.0
-        j_pass = j5 < (45.0 if adx_1h >= 60 else 20.0)
+        j_pass = (j5 < 45.0 or j5 > 55.0) if adx_1h >= 50 else (j5 < 20.0)
     else:
         depth_pass = ask_pct >= 55.0
-        j_pass = j5 > (55.0 if adx_1h >= 60 else 80.0)
+        j_pass = (j5 > 55.0 or j5 < 45.0) if adx_1h >= 50 else (j5 > 80.0)
 
     gates_passing = 1 + int(adx_pass) + int(depth_pass) + int(j_pass)
     return {
@@ -310,13 +310,22 @@ def score_tc_long(
     if adx_1h < TC_ADX_MIN: return 0
     if bid_pct < 55.0: return 0
 
-    # J gate: tiered by ADX strength (relaxed when trend is very strong)
-    j5_long_thr = 45.0 if adx_1h >= 60 else 20.0
-    if j5 >= j5_long_thr:
-        return 0
-    if adx_1h >= 60:
-        logger.info("[GATE] %s LONG relaxed J gate applied (ADX=%.1f J=%.1f threshold=%.0f)",
-                    symbol, adx_1h, j5, j5_long_thr)
+    # J gate: two-tier based on ADX strength
+    if adx_1h >= 50:
+        if j5 < 45.0:
+            j_condition = "OVERSOLD"
+        elif j5 > 55.0:
+            j_condition = "MOMENTUM"
+        else:
+            return 0  # J in neutral zone — no confirmation
+        logger.info("[GATE] %s LONG adx=%.1f tier=RELAXED j5=%.1f condition=%s pass.",
+                    symbol, adx_1h, j5, j_condition)
+    else:
+        if j5 < 20.0:
+            logger.info("[GATE] %s LONG adx=%.1f tier=STANDARD j5=%.1f condition=OVERSOLD pass.",
+                        symbol, adx_1h, j5)
+        else:
+            return 0
 
     score = 2  # P1 + P2 free (guaranteed by gates)
     if ma10 > ma30 > ma60: score += 1                          # P3
@@ -339,13 +348,22 @@ def score_tc_short(
     if adx_1h < TC_ADX_MIN: return 0
     if ask_pct < 55.0: return 0
 
-    # J gate: tiered by ADX strength (relaxed when trend is very strong)
-    j5_short_thr = 55.0 if adx_1h >= 60 else 80.0
-    if j5 <= j5_short_thr:
-        return 0
-    if adx_1h >= 60:
-        logger.info("[GATE] %s SHORT relaxed J gate applied (ADX=%.1f J=%.1f threshold=%.0f)",
-                    symbol, adx_1h, j5, j5_short_thr)
+    # J gate: two-tier based on ADX strength
+    if adx_1h >= 50:
+        if j5 > 55.0:
+            j_condition = "OVERBOUGHT"
+        elif j5 < 45.0:
+            j_condition = "CAPITULATION"
+        else:
+            return 0  # J in neutral zone — no confirmation
+        logger.info("[GATE] %s SHORT adx=%.1f tier=RELAXED j5=%.1f condition=%s pass.",
+                    symbol, adx_1h, j5, j_condition)
+    else:
+        if j5 > 80.0:
+            logger.info("[GATE] %s SHORT adx=%.1f tier=STANDARD j5=%.1f condition=OVERBOUGHT pass.",
+                        symbol, adx_1h, j5)
+        else:
+            return 0
 
     score = 2  # P1 + P2 free
     if ma10 < ma30 < ma60: score += 1                          # P3
@@ -439,6 +457,8 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "score": score,
                     "trend": trend,
                     "adx": round(adx_1h, 1),
+                    "rsi_5m": round(rsi_5m, 1),
+                    "rsi_1h": round(rsi_1h, 1),
                     "entry_price": entry_price,
                     "margin": 700,
                     "leverage": 10,
@@ -456,6 +476,8 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "score": score,
                     "trend": trend,
                     "adx": round(adx_1h, 1),
+                    "rsi_5m": round(rsi_5m, 1),
+                    "rsi_1h": round(rsi_1h, 1),
                     "first_seen": int(time.time()),
                 }
             _prev_scores[key] = score
