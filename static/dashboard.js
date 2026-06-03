@@ -1,6 +1,7 @@
 /* Trend Scanner Part Deux — dashboard.js */
 
 let state = null;
+const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,16 @@ async function fetchState() {
     const res = await fetch('/api/state');
     if (!res.ok) return;
     state = await res.json();
+    // Resync local cooldown end-times from server so the countdown stays accurate
+    const nowSec = Date.now() / 1000;
+    for (const p of (state.pair_states || [])) {
+      const cd = p.cooldown_remaining_seconds;
+      if (cd > 0) {
+        cooldownEndsAt[p.symbol] = nowSec + cd;
+      } else {
+        delete cooldownEndsAt[p.symbol];
+      }
+    }
   } catch (e) {
     // silently ignore network hiccups
   }
@@ -186,10 +197,20 @@ function renderPairTable() {
     const bidColor = bid >= 55 ? '#00ff88' : '#ffffff';
     const askColor = ask >= 55 ? '#ff4444' : '#ffffff';
 
-    const sig = p.signal_state || 'none';
-    const sigCell = sig === 'confirmed' ? '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>'
-      : sig === 'pending' ? '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>'
-      : '';
+    const cdSecs = cooldownEndsAt[p.symbol]
+      ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
+      : 0;
+    let sigCell;
+    if (cdSecs > 0) {
+      const cdM = Math.floor(cdSecs / 60);
+      const cdS = cdSecs % 60;
+      sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m ${cdS < 10 ? '0' : ''}${cdS}s</span>`;
+    } else {
+      const sig = p.signal_state || 'none';
+      sigCell = sig === 'confirmed' ? '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>'
+        : sig === 'pending' ? '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>'
+        : '';
+    }
 
     html += `
       <tr>
