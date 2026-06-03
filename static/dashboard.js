@@ -1,6 +1,7 @@
 /* Trend Scanner Part Deux — dashboard.js */
 
 let state = null;
+let lastScanCount = -1;
 const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -157,6 +158,53 @@ function renderHeader() {
   }
 }
 
+// ── Scan pulse strip render ───────────────────────────────────────────────────
+
+function renderScanPulse() {
+  if (!state) return;
+  const scanCount = state.scan_count ?? 0;
+  const lastScan  = state.last_scan_at;
+  const signals   = (state.alerts || []).length;
+  const cp        = state.closest_pair;
+
+  const numEl = document.getElementById('pulse-scan-num');
+  if (numEl) numEl.textContent = `#${scanCount}`;
+
+  const agoEl = document.getElementById('pulse-ago');
+  if (agoEl && lastScan) {
+    const secs = Math.max(0, Math.floor(Date.now() / 1000) - lastScan);
+    agoEl.textContent = `${secs}s ago`;
+  }
+
+  const sigEl = document.getElementById('pulse-signals');
+  if (sigEl) sigEl.textContent = signals;
+
+  const cpEl = document.getElementById('pulse-closest');
+  if (cpEl) {
+    if (cp && cp.gates_passing > 0) {
+      const dirColor = cp.direction === 'LONG' ? '#00ff88' : '#ff4444';
+      cpEl.innerHTML =
+        `<span style="color:#ffffff">closest:</span> ` +
+        `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
+        `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4 gates)</span>`;
+    } else {
+      cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
+    }
+  }
+
+  // Flash pulse dot when scan_count increments
+  if (lastScanCount !== -1 && scanCount !== lastScanCount) {
+    const dot = document.getElementById('pulse-dot');
+    if (dot) {
+      dot.classList.remove('flash');
+      void dot.offsetWidth; // force reflow to restart CSS animation
+      dot.classList.add('flash');
+    }
+  }
+  lastScanCount = scanCount;
+}
+
 // ── Pair table render ─────────────────────────────────────────────────────────
 // Rows are updated in-place by data-symbol to preserve insertion order.
 // Server returns pairs pre-sorted to match config.py PAIRS order.
@@ -167,7 +215,7 @@ function renderPairTable() {
   const pairs = state.pair_states || [];
 
   if (pairs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
     return;
   }
 
@@ -207,6 +255,21 @@ function renderPairTable() {
         : '';
     }
 
+    // Gate dots
+    const gs = p.gates_status || {};
+    const gatesList = [
+      { name: 'TREND', pass: gs.trend_pass },
+      { name: 'ADX',   pass: gs.adx_pass },
+      { name: 'DEPTH', pass: gs.depth_pass },
+      { name: 'J',     pass: gs.j_pass },
+    ];
+    const passingCount = gatesList.filter(g => g.pass).length;
+    const dotsHtml = gatesList.map(g => {
+      const color = g.pass ? '#00ff88' : (passingCount === 3 ? '#ffaa00' : '#444444');
+      return `<span class="gate-dot" style="background:${color}"></span>`;
+    }).join('');
+    const gatesCell = `<div class="gate-dots" title="TREND · ADX · DEPTH · J">${dotsHtml}</div>`;
+
     const cellsHtml = `
       <td class="sym">${p.symbol}</td>
       <td class="${trendClass}">${trendLabel}</td>
@@ -215,6 +278,7 @@ function renderPairTable() {
       <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
       <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
       <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
+      <td style="text-align:center">${gatesCell}</td>
       <td style="text-align:center">${sigCell}</td>`;
 
     let row = tbody.querySelector(`tr[data-symbol="${p.symbol}"]`);
@@ -227,6 +291,63 @@ function renderPairTable() {
       tbody.appendChild(row);
     }
   }
+}
+
+// ── Market snapshot render ────────────────────────────────────────────────────
+
+function toggleSnapshot() {
+  const body    = document.getElementById('snapshot-body');
+  const chevron = document.getElementById('snapshot-chevron');
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  if (chevron) chevron.textContent = isOpen ? '▶' : '▼';
+}
+
+function renderMarketSnapshot() {
+  const content = document.getElementById('snapshot-content');
+  if (!content || !state) return;
+  const ms = state.market_snapshot;
+  if (!ms) return;
+
+  const tb = ms.trend_bias     || {};
+  const ab = ms.adx_bands      || {};
+  const mb = ms.momentum_bands || {};
+  const db = ms.depth_bias     || {};
+
+  function chips(arr, color) {
+    if (!arr || arr.length === 0)
+      return `<span style="color:#444444;font-size:10px">—</span>`;
+    return arr.map(s =>
+      `<span style="color:${color};font-weight:bold;font-size:10px">${s}</span>`
+    ).join(' ');
+  }
+
+  content.innerHTML = `
+    <div class="snapshot-section">
+      <div class="snap-label">Trend Bias</div>
+      <div class="snap-row"><span class="snap-key">Bull</span>${chips(tb.strong_bull, '#00ff88')}</div>
+      <div class="snap-row"><span class="snap-key">Bear</span>${chips(tb.strong_bear, '#ff4444')}</div>
+      <div class="snap-row"><span class="snap-key">Neutral</span>${chips(tb.neutral, '#ffaa00')}</div>
+    </div>
+    <div class="snapshot-section">
+      <div class="snap-label">ADX Strength</div>
+      <div class="snap-row"><span class="snap-key">≥60</span>${chips(ab.strong, '#00ff88')}</div>
+      <div class="snap-row"><span class="snap-key">30–59</span>${chips(ab.moderate, '#ffaa00')}</div>
+      <div class="snap-row"><span class="snap-key">&lt;30</span>${chips(ab.weak, '#666666')}</div>
+    </div>
+    <div class="snapshot-section">
+      <div class="snap-label">Momentum J</div>
+      <div class="snap-row"><span class="snap-key">OB ≥80</span>${chips(mb.overbought, '#ff4444')}</div>
+      <div class="snap-row"><span class="snap-key">Neutral</span>${chips(mb.neutral_j, '#ffffff')}</div>
+      <div class="snap-row"><span class="snap-key">OS ≤20</span>${chips(mb.oversold, '#00ff88')}</div>
+    </div>
+    <div class="snapshot-section">
+      <div class="snap-label">Depth Bias</div>
+      <div class="snap-row"><span class="snap-key">Ask ≥55%</span>${chips(db.ask_dominant, '#ff4444')}</div>
+      <div class="snap-row"><span class="snap-key">Bid ≥55%</span>${chips(db.bid_dominant, '#00ff88')}</div>
+      <div class="snap-row"><span class="snap-key">Balanced</span>${chips(db.balanced, '#ffffff')}</div>
+    </div>`;
 }
 
 // ── Alerts render ─────────────────────────────────────────────────────────────
@@ -417,7 +538,9 @@ function renderAlerts() {
 
 function renderAll() {
   renderHeader();
+  renderScanPulse();
   renderPairTable();
+  renderMarketSnapshot();
   renderAlerts();
   renderTradeLog();
 }
