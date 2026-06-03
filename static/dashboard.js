@@ -83,6 +83,15 @@ async function closeTrade(symbol, direction) {
       showToast(data.detail || 'Failed to close trade');
       return;
     }
+    // Immediately retire the card from local state — don't wait for the next poll
+    if (state) {
+      state.alerts = (state.alerts || []).filter(
+        a => !(a.symbol === symbol && a.direction === direction)
+      );
+      const key = `${symbol}${direction}`;
+      if (state.open_trades) delete state.open_trades[key];
+    }
+    renderAlerts();
     await fetchState();
     renderAll();
   } catch (e) {
