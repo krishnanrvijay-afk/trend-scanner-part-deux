@@ -425,26 +425,44 @@ def score_tc_short(
 
 # ── SL / TP ───────────────────────────────────────────────────────────────────
 
-def calc_sl_tp(entry_price: float, direction: str, atr: float, margin_usdc: float) -> dict:
+def calc_sl_tp(entry_price: float, direction: str, atr: float, margin_usdc: float,
+               leverage: int = 10, symbol: str = "?") -> dict:
+    """Compute SL/TP levels from ATR.
+    sl_distance = 1.5 × ATR, clamped to [0.3%, 3.0%] of entry — outside that range
+    the ATR value is invalid (NaN bleed, wrong candle timeframe, etc.) and a 1.0%
+    fallback is used instead.
+    dollar_risk = 1R dollar loss = margin × leverage × sl_pct  (leverage-aware)."""
     sl_distance = 1.5 * atr
+    sl_pct = (sl_distance / entry_price) * 100 if entry_price > 0 else 0
+
+    # Reject ATR values that would produce nonsensical SL distances
+    if atr <= 0 or sl_pct < 0.3 or sl_pct > 3.0:
+        logger.warning(
+            "[ATR WARNING] %s %s invalid ATR=%.6f (sl_pct=%.3f%%) — using fallback 1.0%%",
+            symbol, direction, atr, sl_pct,
+        )
+        sl_pct = 1.0
+        sl_distance = entry_price * 0.01
+
     if direction == "LONG":
-        sl_price = entry_price - sl_distance
+        sl_price  = entry_price - sl_distance
         tp1_price = entry_price + 1.5 * sl_distance
         tp2_price = entry_price + 2.0 * sl_distance
     else:
-        sl_price = entry_price + sl_distance
+        sl_price  = entry_price + sl_distance
         tp1_price = entry_price - 1.5 * sl_distance
         tp2_price = entry_price - 2.0 * sl_distance
 
-    sl_pct = (sl_distance / entry_price) * 100 if entry_price > 0 else 0
-    dollar_risk = margin_usdc * (sl_pct / 100)
+    # dollar_risk = leverage-aware 1R dollar loss
+    dollar_risk = margin_usdc * leverage * (sl_pct / 100)
 
     return {
-        "sl_price": round(sl_price, 6),
-        "sl_pct": round(sl_pct, 2),
+        "sl_price":    round(sl_price, 6),
+        "sl_pct":      round(sl_pct, 2),
+        "sl_distance": round(sl_distance, 8),
         "dollar_risk": round(dollar_risk, 2),
-        "tp1_price": round(tp1_price, 6),
-        "tp2_price": round(tp2_price, 6),
+        "tp1_price":   round(tp1_price, 6),
+        "tp2_price":   round(tp2_price, 6),
     }
 
 
@@ -499,7 +517,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             if prev >= TC_MIN_SCORE and not _in_cooldown(key):
                 # Second consecutive qualifying scan → emit full alert
                 entry_price = price
-                sl_tp = calc_sl_tp(entry_price, direction, atr, 700)
+                sl_tp = calc_sl_tp(entry_price, direction, atr, 700, leverage=10, symbol=symbol)
+                logger.info(
+                    "[TRADE] %s %s entry=%.6f atr=%.6f sl_distance=%.6f sl_price=%.6f risk_pct=%.2f%%",
+                    symbol, direction, entry_price, atr,
+                    sl_tp["sl_distance"], sl_tp["sl_price"], sl_tp["sl_pct"],
+                )
                 alerts.append({
                     "symbol": symbol,
                     "direction": direction,
