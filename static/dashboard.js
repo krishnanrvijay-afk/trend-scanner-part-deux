@@ -145,7 +145,7 @@ function renderPairTable() {
 
   const pairs = state.pair_states || [];
   if (pairs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
     return;
   }
 
@@ -176,20 +176,22 @@ function renderPairTable() {
     const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
     const bidColor = bid >= 55 ? '#00ff88' : '#ffffff';
     const askColor = ask >= 55 ? '#ff4444' : '#ffffff';
-    const lsColor  = ls  >= 6  ? '#00ff88' : '#666666';
-    const ssColor  = ss  >= 6  ? '#00ff88' : '#666666';
+
+    const sig = p.signal_state || 'none';
+    const sigCell = sig === 'confirmed' ? '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>'
+      : sig === 'pending' ? '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>'
+      : '';
 
     html += `
       <tr>
         <td class="sym">${p.symbol}</td>
         <td class="${trendClass}">${trendLabel}</td>
         <td class="price-cell">${fmtPrice(livePrice)}</td>
-        <td style="color:${lsColor};font-weight:bold;text-align:right">${ls}</td>
-        <td style="color:${ssColor};font-weight:bold;text-align:right">${ss}</td>
         <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
         <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
         <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
         <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
+        <td style="text-align:center">${sigCell}</td>
       </tr>`;
   }
   tbody.innerHTML = html;
