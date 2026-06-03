@@ -19,6 +19,8 @@ logger = logging.getLogger("scanner")
 _prev_scores: dict[str, int] = {}
 _cooldowns: dict[str, float] = {}
 _pending: dict[str, dict] = {}
+_confirmed_at: dict[str, float] = {}
+CONFIRMED_SHOW_SECONDS = 30
 
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_LONG=%s | ADX_SHORT=%s"
@@ -36,6 +38,18 @@ def _in_cooldown(key: str) -> bool:
 
 def _set_cooldown(key: str):
     _cooldowns[key] = time.time() + COOLDOWN_MINUTES * 60
+
+
+def _get_signal_state(symbol: str) -> str:
+    """Returns per-symbol signal state for the SIGNAL column: none | pending | confirmed."""
+    now = time.time()
+    for direction in ("LONG", "SHORT"):
+        key = f"{symbol}{direction}"
+        if key in _pending:
+            return "pending"
+        if key in _confirmed_at and now - _confirmed_at[key] < CONFIRMED_SHOW_SECONDS:
+            return "confirmed"
+    return "none"
 
 
 def get_pending() -> list[dict]:
@@ -362,6 +376,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                 })
                 _pending.pop(key, None)
                 _set_cooldown(key)
+                _confirmed_at[key] = time.time()
             else:
                 # First qualifying scan → mark as pending (awaiting reconfirmation)
                 _pending[key] = {
@@ -393,6 +408,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "ma30": round(ma30, 4),
         "ma60": round(ma60, 4),
         "alerts": alerts,
+        "signal_state": _get_signal_state(symbol),
         "scanned_at": int(time.time()),
     }
 
