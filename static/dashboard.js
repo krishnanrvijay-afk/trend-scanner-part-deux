@@ -158,39 +158,34 @@ function renderHeader() {
 }
 
 // ── Pair table render ─────────────────────────────────────────────────────────
+// Rows are updated in-place by data-symbol to preserve insertion order.
+// Server returns pairs pre-sorted to match config.py PAIRS order.
 
 function renderPairTable() {
   if (!state) return;
   const tbody = document.getElementById('pair-tbody');
-
   const pairs = state.pair_states || [];
+
   if (pairs.length === 0) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
     return;
   }
 
-  // Sort: Strong Bull/Bear first, then by max score desc
-  const sorted = [...pairs].sort((a, b) => {
-    const aMax = Math.max(a.long_score || 0, a.short_score || 0);
-    const bMax = Math.max(b.long_score || 0, b.short_score || 0);
-    return bMax - aMax;
-  });
+  // Clear any placeholder row (no data-symbol) left from the empty state
+  const placeholder = tbody.querySelector('tr:not([data-symbol])');
+  if (placeholder) tbody.innerHTML = '';
 
-  let html = '';
-  for (const p of sorted) {
+  for (const p of pairs) {
     const trendClass = p.trend === 'Strong Bull' ? 'trend-bull'
       : p.trend === 'Strong Bear' ? 'trend-bear' : 'trend-neu';
     const trendLabel = p.trend === 'Strong Bull' ? '▲ S.Bull'
       : p.trend === 'Strong Bear' ? '▼ S.Bear' : '— Neutral';
 
     const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
-
     const adx = p.adx  ?? 0;
     const j5  = p.j5   ?? 50;
     const bid = p.bid_pct ?? 0;
     const ask = p.ask_pct ?? 0;
-    const ls  = p.long_score  ?? 0;
-    const ss  = p.short_score ?? 0;
 
     const adxColor = adx >= 30 ? '#00ff88' : '#666666';
     const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
@@ -212,19 +207,26 @@ function renderPairTable() {
         : '';
     }
 
-    html += `
-      <tr>
-        <td class="sym">${p.symbol}</td>
-        <td class="${trendClass}">${trendLabel}</td>
-        <td class="price-cell">${fmtPrice(livePrice)}</td>
-        <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
-        <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
-        <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
-        <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
-        <td style="text-align:center">${sigCell}</td>
-      </tr>`;
+    const cellsHtml = `
+      <td class="sym">${p.symbol}</td>
+      <td class="${trendClass}">${trendLabel}</td>
+      <td class="price-cell">${fmtPrice(livePrice)}</td>
+      <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
+      <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
+      <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
+      <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
+      <td style="text-align:center">${sigCell}</td>`;
+
+    let row = tbody.querySelector(`tr[data-symbol="${p.symbol}"]`);
+    if (row) {
+      row.innerHTML = cellsHtml;
+    } else {
+      row = document.createElement('tr');
+      row.dataset.symbol = p.symbol;
+      row.innerHTML = cellsHtml;
+      tbody.appendChild(row);
+    }
   }
-  tbody.innerHTML = html;
 }
 
 // ── Alerts render ─────────────────────────────────────────────────────────────
