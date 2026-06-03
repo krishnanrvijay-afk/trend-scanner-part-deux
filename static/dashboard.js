@@ -159,17 +159,31 @@ function renderPairTable() {
 
     const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
 
+    const adx = p.adx  ?? 0;
+    const j5  = p.j5   ?? 50;
+    const bid = p.bid_pct ?? 0;
+    const ask = p.ask_pct ?? 0;
+    const ls  = p.long_score  ?? 0;
+    const ss  = p.short_score ?? 0;
+
+    const adxColor = adx >= 30 ? '#00ff88' : '#666666';
+    const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
+    const bidColor = bid >= 55 ? '#00ff88' : '#ffffff';
+    const askColor = ask >= 55 ? '#ff4444' : '#ffffff';
+    const lsColor  = ls  >= 6  ? '#00ff88' : '#666666';
+    const ssColor  = ss  >= 6  ? '#ff4444' : '#666666';
+
     html += `
       <tr>
         <td class="sym">${p.symbol}</td>
         <td class="${trendClass}">${trendLabel}</td>
         <td class="price-cell">${fmtPrice(livePrice)}</td>
-        <td class="${scoreClass(p.long_score)}">${p.long_score ?? '—'}</td>
-        <td class="${scoreClass(p.short_score)}">${p.short_score ?? '—'}</td>
-        <td>${fmt(p.adx, 1)}</td>
-        <td>${fmt(p.j5, 1)}</td>
-        <td>${fmt(p.bid_pct, 1)}%</td>
-        <td>${fmt(p.ask_pct, 1)}%</td>
+        <td style="color:${lsColor};text-align:right">${ls || '—'}</td>
+        <td style="color:${ssColor};text-align:right">${ss || '—'}</td>
+        <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
+        <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
+        <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
+        <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
       </tr>`;
   }
   tbody.innerHTML = html;
@@ -181,11 +195,16 @@ function renderAlerts() {
   if (!state) return;
   const container = document.getElementById('alerts-container');
   const alerts = (state.alerts || []).slice().reverse(); // newest first
+  const pendings = (state.pending_alerts || []).slice().reverse();
 
-  if (alerts.length === 0) {
+  // Filter out pendings that already have a confirmed alert
+  const confirmedKeys = new Set(alerts.map(a => `${a.symbol}${a.direction}`));
+  const visiblePendings = pendings.filter(p => !confirmedKeys.has(`${p.symbol}${p.direction}`));
+
+  if (alerts.length === 0 && visiblePendings.length === 0) {
     container.innerHTML = `
       <div class="alerts-empty">
-        Scanning every 20s.<br>Alerts appear here when<br>TC conditions are met twice.
+        Scanning every 10s.<br>Alerts appear here when<br>TC conditions are met twice.
       </div>`;
     return;
   }
@@ -195,6 +214,45 @@ function renderAlerts() {
   const openTrades = state.open_trades || {};
 
   let html = '<div class="alerts-list">';
+
+  // ── Pending cards (amber, no OPEN pill) ──────────────────────────────────
+  for (const p of visiblePendings) {
+    const isLong = p.direction === 'LONG';
+    html += `
+      <div class="alert-card" style="border-left:3px solid #ffaa00;opacity:0.85">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <span style="
+            display:inline-flex;align-items:center;gap:6px;
+            padding:3px 8px;border-radius:4px;
+            background:rgba(255,170,0,0.12);border:1px solid rgba(255,170,0,0.4);
+            color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.06em;
+            animation:pending-pulse 1.4s infinite
+          ">● PENDING RECONFIRMATION</span>
+        </div>
+        <div class="alert-header-row">
+          <div class="alert-sig">
+            <span class="alert-sym">${p.symbol}</span>
+            <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${p.direction}</span>
+          </div>
+          <div class="alert-score">Score <span>${p.score}/7</span> · ADX ${fmt(p.adx, 1)}</div>
+        </div>
+        <div class="alert-grid">
+          <div class="ag-row">
+            <span class="ag-label">Trend</span>
+            <span class="ag-val ${isLong ? 'trend-bull' : 'trend-bear'}">${p.trend}</span>
+          </div>
+          <div class="ag-row">
+            <span class="ag-label">First seen</span>
+            <span class="ag-val" style="color:var(--muted)">${relTime(p.first_seen)}</span>
+          </div>
+        </div>
+        <div class="alert-footer">
+          <span class="alert-time" style="color:#ffaa00">Awaiting next scan…</span>
+        </div>
+      </div>`;
+  }
+
+  // ── Confirmed alert cards ─────────────────────────────────────────────────
   for (const alert of alerts) {
     const key = `${alert.symbol}${alert.direction}`;
     const trade = openTrades[key];
