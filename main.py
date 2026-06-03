@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -6,6 +7,15 @@ from typing import Optional
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# Ensure the scanner logger emits at INFO level regardless of uvicorn's root config
+_scanner_log = logging.getLogger("scanner")
+if not _scanner_log.handlers:
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    _scanner_log.addHandler(_sh)
+_scanner_log.setLevel(logging.INFO)
+_scanner_log.propagate = False
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
