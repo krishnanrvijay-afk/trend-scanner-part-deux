@@ -3,10 +3,13 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
 load_dotenv()
+
+DEPLOY_TIME = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 # Ensure the scanner logger emits at INFO level regardless of uvicorn's root config
 _scanner_log = logging.getLogger("scanner")
@@ -98,6 +101,7 @@ class AppState:
             },
             "last_scan_at": self.last_scan_at,
             "scan_count": self.scan_count,
+            "deploy_time": DEPLOY_TIME,
         }
 
 
