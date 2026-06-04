@@ -48,6 +48,7 @@ _universe_state: dict = {
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_MIN=%s"
     " | DEPTH=%s%% | J_SHORT>80(ADX<50)/>55or<45(ADX>=50) | J_LONG<20(ADX<50)/<45or>55(ADX>=50)"
+    " | P4_SHORT=rsi<40_rising(CAP)/rsi>60_falling(STD) P6_SHORT=vol>1.2x(CAP)/vol>1.5x(STD)"
     " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
     ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
     DEPTH_GATE_PCT,
@@ -412,23 +413,58 @@ def score_tc_short(
         else:
             return 0
 
+    # ── Tier determination (must come before point calculation) ─────────────
+    is_capitulation = adx_1h >= 50 and j5 < 45.0
+    tier = "CAPITULATION" if is_capitulation else "STANDARD"
+
     score = 2  # P1 + P2 free
     p3 = int(ma10 < ma30 < ma60)
-    p4 = int(rsi_5m > 60 and rsi_5m < rsi_5m_prev)
+
+    # P4 — tier-aware RSI confirmation
+    if is_capitulation:
+        # RSI oversold and ticking up: exhaustion bounce before continuation lower
+        p4 = int(rsi_5m < 40 and rsi_5m > rsi_5m_prev)
+    else:
+        # RSI declining from overbought: standard momentum confirmation
+        p4 = int(rsi_5m > 60 and rsi_5m < rsi_5m_prev)
+
     p5 = int(rsi_1h < 50)
-    p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
+
+    # P6 — tier-aware volume threshold
+    if is_capitulation:
+        p6 = int(vol_ma10 > 0 and last_vol > 1.2 * vol_ma10)
+    else:
+        p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
+
     score += p3 + p4 + p5 + p6
     score += 1  # P7 free
+
+    # Tier log — fires whenever all 4 hard gates pass, regardless of score
+    vol_ratio = (last_vol / vol_ma10) if vol_ma10 > 0 else 0.0
+    if is_capitulation:
+        p4_desc = f"rsi_5m={rsi_5m:.1f} {'rising' if rsi_5m > rsi_5m_prev else 'not rising'}"
+        p6_desc = f"vol={vol_ratio:.2f}x MA10 {'above' if p6 else 'below'} 1.2x threshold"
+    else:
+        p4_desc = f"rsi_5m={rsi_5m:.1f} {'falling' if rsi_5m < rsi_5m_prev else 'not falling'}"
+        p6_desc = f"vol={vol_ratio:.2f}x MA10 {'above' if p6 else 'below'} 1.5x threshold"
+    logger.info(
+        "[TIER] %s SHORT tier=%s P4=%d (%s) P6=%d (%s)",
+        symbol, tier, p4, p4_desc, p6, p6_desc,
+    )
 
     if score < TC_MIN_SCORE:
         reasons = []
         if not p3: reasons.append("P3 ma not aligned bear")
-        if not p4: reasons.append("P4 rsi_5m not falling from overbought")
+        if not p4: reasons.append(
+            "P4 rsi_5m not oversold+rising" if is_capitulation else "P4 rsi_5m not falling from overbought"
+        )
         if not p5: reasons.append("P5 rsi_1h above 50")
-        if not p6: reasons.append("P6 volume not spiking")
+        if not p6: reasons.append(
+            "P6 vol below 1.2x MA10" if is_capitulation else "P6 volume not spiking"
+        )
         logger.info(
-            "[SCORE DETAIL] %s SHORT gates=PASS score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
-            symbol, score, p3, p4, p5, p6, " ".join(reasons),
+            "[SCORE DETAIL] %s SHORT gates=PASS tier=%s score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
+            symbol, tier, score, p3, p4, p5, p6, " ".join(reasons),
         )
 
     return score
