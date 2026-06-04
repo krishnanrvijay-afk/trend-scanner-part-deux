@@ -5,11 +5,25 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+# ── Startup: validate pandas-ta availability ──────────────────────────────────
+try:
+    import pandas_ta as _pta
+    logging.getLogger("scanner").info(
+        "[STARTUP] pandas-ta version %s loaded", getattr(_pta, "__version__", "unknown")
+    )
+except ImportError:
+    logging.getLogger("scanner").critical(
+        "[STARTUP CRITICAL] pandas-ta not available — indicator calculations will fail"
+    )
+
 from config import (
     PAIRS, ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
     DEPTH_GATE_PCT,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE,
     COOLDOWN_MINUTES, PAPER_MODE,
+    PROMOTED_SLOTS, ROTATION_WINDOW_MINUTES,
+    UNIVERSE_VOLUME_MIN_USD, UNIVERSE_OI_MIN_USD,
+    UNIVERSE_FUNDING_MIN_ABS, UNIVERSE_VOLUME_FALLBACK_MULTIPLIER,
 )
 from hl_client import HLClient
 
@@ -22,9 +36,19 @@ _pending: dict[str, dict] = {}
 _confirmed_at: dict[str, float] = {}
 CONFIRMED_SHOW_SECONDS = 30
 
+# ── Universe scanner state ─────────────────────────────────────────────────────
+_promoted_pairs: dict[str, dict] = {}   # symbol → slot entry
+_universe_state: dict = {
+    "last_scan_at": None,
+    "total_pairs_scanned": 0,
+    "pairs_surviving_filter": 0,
+    "last_candidates": [],
+}
+
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_MIN=%s"
     " | DEPTH=%s%% | J_SHORT>80(ADX<50)/>55or<45(ADX>=50) | J_LONG<20(ADX<50)/<45or>55(ADX>=50)"
+    " | P4_SHORT=rsi<40_rising(CAP)/rsi>60_falling(STD) P6_SHORT=vol>1.2x(CAP)/vol>1.5x(STD)"
     " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
     ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
     DEPTH_GATE_PCT,
@@ -36,8 +60,10 @@ def _in_cooldown(key: str) -> bool:
     return time.time() < _cooldowns.get(key, 0)
 
 
-def _set_cooldown(key: str):
-    _cooldowns[key] = time.time() + COOLDOWN_MINUTES * 60
+def _set_cooldown(key: str, reason: str = "UNKNOWN"):
+    duration = int(COOLDOWN_MINUTES * 60)
+    _cooldowns[key] = time.time() + duration
+    logger.info("[COOLDOWN] %s cooldown started — reason=%s duration=%ss", key, reason, duration)
 
 
 def _get_signal_state(symbol: str) -> str:
@@ -63,10 +89,9 @@ def get_cooldown_remaining(symbol: str, direction: str) -> int:
 
 
 def set_close_cooldown(symbol: str, direction: str):
-    """Called by main.py when a trade fully closes — starts a fresh 30-min cooldown."""
+    """Called by main.py when a trade fully closes — the ONLY place cooldown is started."""
     key = f"{symbol}{direction}"
-    _set_cooldown(key)
-    logger.info("[COOLDOWN] %s %s cooldown set for %s min on trade close", symbol, direction, COOLDOWN_MINUTES)
+    _set_cooldown(key, reason="TRADE_CLOSE")
 
 
 def reset_scan_counter(symbol: str, direction: str):
@@ -75,6 +100,16 @@ def reset_scan_counter(symbol: str, direction: str):
     _prev_scores[key] = 0
     _pending.pop(key, None)
     logger.info("[RESET] %s %s scan counter reset on trade close", symbol, direction)
+
+
+def get_promoted_pairs() -> list[dict]:
+    """Returns current promoted pair entries for serialisation."""
+    return list(_promoted_pairs.values())
+
+
+def get_universe_state() -> dict:
+    """Returns universe scanner state for serialisation."""
+    return dict(_universe_state)
 
 
 # ── Pure-pandas indicator helpers ─────────────────────────────────────────────
@@ -378,23 +413,79 @@ def score_tc_short(
         else:
             return 0
 
+    # ── Tier determination (must come before point calculation) ─────────────
+    is_capitulation = adx_1h >= 50 and j5 < 45.0
+    tier = "CAPITULATION" if is_capitulation else "STANDARD"
+
     score = 2  # P1 + P2 free
     p3 = int(ma10 < ma30 < ma60)
-    p4 = int(rsi_5m > 60 and rsi_5m < rsi_5m_prev)
+
+    # P4 — tier-aware RSI confirmation
+    if is_capitulation:
+        # RSI oversold and ticking up: exhaustion bounce before continuation lower
+        p4 = int(rsi_5m < 40 and rsi_5m > rsi_5m_prev)
+    else:
+        # RSI declining from overbought: standard momentum confirmation
+        p4 = int(rsi_5m > 60 and rsi_5m < rsi_5m_prev)
+
     p5 = int(rsi_1h < 50)
-    p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
+
+    # P6 — tier-aware volume threshold
+    if is_capitulation:
+        p6 = int(vol_ma10 > 0 and last_vol > 1.2 * vol_ma10)
+    else:
+        p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
+
     score += p3 + p4 + p5 + p6
     score += 1  # P7 free
+
+    # Tier log — fires whenever all 4 hard gates pass, regardless of score
+    # Expose every sub-condition value so Railway logs make the evaluation unambiguous.
+    vol_ratio = (last_vol / vol_ma10) if vol_ma10 > 0 else 0.0
+    _prev_valid = rsi_5m_prev is not None and not (isinstance(rsi_5m_prev, float) and rsi_5m_prev != rsi_5m_prev)
+    if is_capitulation:
+        _oversold = rsi_5m < 40
+        _rising   = (rsi_5m > rsi_5m_prev) if _prev_valid else False
+        logger.info(
+            "[TIER] %s SHORT tier=CAPITULATION P4=%d"
+            " rsi_5m=%.2f rsi_5m_prev=%s"
+            " condition=rsi<40_AND_rising"
+            " evaluated=%.2f<40=%s rising=%s"
+            " P6=%d vol=%.2fx MA10 threshold=1.2x",
+            symbol, p4,
+            rsi_5m, f"{rsi_5m_prev:.2f}" if _prev_valid else "NaN",
+            rsi_5m, str(_oversold).upper(), str(_rising).upper(),
+            p6, vol_ratio,
+        )
+    else:
+        _overbought = rsi_5m > 60
+        _falling    = (rsi_5m < rsi_5m_prev) if _prev_valid else False
+        logger.info(
+            "[TIER] %s SHORT tier=STANDARD P4=%d"
+            " rsi_5m=%.2f rsi_5m_prev=%s"
+            " condition=rsi>60_AND_falling"
+            " evaluated=%.2f>60=%s falling=%s"
+            " P6=%d vol=%.2fx MA10 threshold=1.5x",
+            symbol, p4,
+            rsi_5m, f"{rsi_5m_prev:.2f}" if _prev_valid else "NaN",
+            rsi_5m, str(_overbought).upper(), str(_falling).upper(),
+            p6, vol_ratio,
+        )
 
     if score < TC_MIN_SCORE:
         reasons = []
         if not p3: reasons.append("P3 ma not aligned bear")
-        if not p4: reasons.append("P4 rsi_5m not falling from overbought")
+        if not p4: reasons.append(
+            f"P4 rsi_5m not rising from oversold (rsi_5m={rsi_5m:.1f} prev={rsi_5m_prev:.1f})" if is_capitulation
+            else f"P4 rsi_5m not falling from overbought (rsi_5m={rsi_5m:.1f} prev={rsi_5m_prev:.1f})"
+        )
         if not p5: reasons.append("P5 rsi_1h above 50")
-        if not p6: reasons.append("P6 volume not spiking")
+        if not p6: reasons.append(
+            "P6 vol below 1.2x MA10" if is_capitulation else "P6 volume not spiking"
+        )
         logger.info(
-            "[SCORE DETAIL] %s SHORT gates=PASS score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
-            symbol, score, p3, p4, p5, p6, " ".join(reasons),
+            "[SCORE DETAIL] %s SHORT gates=PASS tier=%s score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
+            symbol, tier, score, p3, p4, p5, p6, " ".join(reasons),
         )
 
     return score
@@ -402,26 +493,44 @@ def score_tc_short(
 
 # ── SL / TP ───────────────────────────────────────────────────────────────────
 
-def calc_sl_tp(entry_price: float, direction: str, atr: float, margin_usdc: float) -> dict:
+def calc_sl_tp(entry_price: float, direction: str, atr: float, margin_usdc: float,
+               leverage: int = 10, symbol: str = "?") -> dict:
+    """Compute SL/TP levels from ATR.
+    sl_distance = 1.5 × ATR, clamped to [0.3%, 3.0%] of entry — outside that range
+    the ATR value is invalid (NaN bleed, wrong candle timeframe, etc.) and a 1.0%
+    fallback is used instead.
+    dollar_risk = 1R dollar loss = margin × leverage × sl_pct  (leverage-aware)."""
     sl_distance = 1.5 * atr
+    sl_pct = (sl_distance / entry_price) * 100 if entry_price > 0 else 0
+
+    # Reject ATR values that would produce nonsensical SL distances
+    if atr <= 0 or sl_pct < 0.3 or sl_pct > 3.0:
+        logger.warning(
+            "[ATR WARNING] %s %s invalid ATR=%.6f (sl_pct=%.3f%%) — using fallback 1.0%%",
+            symbol, direction, atr, sl_pct,
+        )
+        sl_pct = 1.0
+        sl_distance = entry_price * 0.01
+
     if direction == "LONG":
-        sl_price = entry_price - sl_distance
+        sl_price  = entry_price - sl_distance
         tp1_price = entry_price + 1.5 * sl_distance
         tp2_price = entry_price + 2.0 * sl_distance
     else:
-        sl_price = entry_price + sl_distance
+        sl_price  = entry_price + sl_distance
         tp1_price = entry_price - 1.5 * sl_distance
         tp2_price = entry_price - 2.0 * sl_distance
 
-    sl_pct = (sl_distance / entry_price) * 100 if entry_price > 0 else 0
-    dollar_risk = margin_usdc * (sl_pct / 100)
+    # dollar_risk = leverage-aware 1R dollar loss
+    dollar_risk = margin_usdc * leverage * (sl_pct / 100)
 
     return {
-        "sl_price": round(sl_price, 6),
-        "sl_pct": round(sl_pct, 2),
+        "sl_price":    round(sl_price, 6),
+        "sl_pct":      round(sl_pct, 2),
+        "sl_distance": round(sl_distance, 8),
         "dollar_risk": round(dollar_risk, 2),
-        "tp1_price": round(tp1_price, 6),
-        "tp2_price": round(tp2_price, 6),
+        "tp1_price":   round(tp1_price, 6),
+        "tp2_price":   round(tp2_price, 6),
     }
 
 
@@ -476,7 +585,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             if prev >= TC_MIN_SCORE and not _in_cooldown(key):
                 # Second consecutive qualifying scan → emit full alert
                 entry_price = price
-                sl_tp = calc_sl_tp(entry_price, direction, atr, 700)
+                sl_tp = calc_sl_tp(entry_price, direction, atr, 700, leverage=10, symbol=symbol)
+                logger.info(
+                    "[TRADE] %s %s entry=%.6f atr=%.6f sl_distance=%.6f sl_price=%.6f risk_pct=%.2f%%",
+                    symbol, direction, entry_price, atr,
+                    sl_tp["sl_distance"], sl_tp["sl_price"], sl_tp["sl_pct"],
+                )
                 alerts.append({
                     "symbol": symbol,
                     "direction": direction,
@@ -492,7 +606,6 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "fired_at": int(time.time()),
                 })
                 _pending.pop(key, None)
-                _set_cooldown(key)
                 _confirmed_at[key] = time.time()
             else:
                 # First qualifying scan → mark as pending (awaiting reconfirmation)
@@ -533,9 +646,145 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     }
 
 
+async def run_universe_scan(client: HLClient, open_trade_symbols: set) -> None:
+    """Universe scanner: fetch all HL perps, filter by volume/OI/funding, rank by
+    ADX + trend + depth, fill promoted slots.  Runs every UNIVERSE_SCAN_INTERVAL_MINUTES
+    as an independent background task — never touches the TC scan loop."""
+    try:
+        # Step 1 — fetch all HL pairs
+        universe = await client.get_universe_metadata()
+        if not universe:
+            logger.warning("[UNIVERSE] metadata fetch returned empty — will retry next interval")
+            return
+
+        fixed_set    = set(PAIRS)
+        promoted_set = set(_promoted_pairs.keys())
+        _universe_state["total_pairs_scanned"] = len(universe)
+        candidates = [p for p in universe
+                      if p["symbol"] not in fixed_set and p["symbol"] not in promoted_set]
+
+        # Step 2 — filter
+        vol_threshold = UNIVERSE_VOLUME_MIN_USD
+
+        def _passes(p: dict, vol_min: float) -> bool:
+            return (p["volume_24h_usd"] >= vol_min
+                    and p["open_interest_usd"] >= UNIVERSE_OI_MIN_USD
+                    and abs(p["funding_rate"]) >= UNIVERSE_FUNDING_MIN_ABS)
+
+        filtered = [p for p in candidates if _passes(p, vol_threshold)]
+        relaxed = False
+        if len(filtered) < 5:
+            vol_threshold *= UNIVERSE_VOLUME_FALLBACK_MULTIPLIER
+            filtered = [p for p in candidates if _passes(p, vol_threshold)]
+            relaxed = True
+
+        _universe_state["pairs_surviving_filter"] = len(filtered)
+        logger.info("[UNIVERSE] %d candidates after filter%s",
+                    len(filtered), " (volume relaxed)" if relaxed else "")
+
+        if not filtered:
+            _universe_state["last_scan_at"] = int(time.time())
+            return
+
+        # Step 3 — rank survivors (ADX 0-3 + trend clarity 0-2 + depth imbalance 0-2)
+        async def _score(p: dict) -> Optional[dict]:
+            try:
+                candles_1h, ob = await asyncio.gather(
+                    client.get_candles(p["symbol"], "1h", 80),
+                    client.get_orderbook(p["symbol"], 20),
+                )
+                if not candles_1h:
+                    return None
+                df_1h = pd.DataFrame(candles_1h)
+                adx   = compute_adx(df_1h, 14)
+                trend = classify_trend(df_1h)
+                bid_pct, ask_pct = compute_depth_pcts(ob)
+
+                sc = 0
+                if adx >= 60:   sc += 3
+                elif adx >= 40: sc += 2
+                elif adx >= 30: sc += 1
+
+                if trend in ("Strong Bull", "Strong Bear"):
+                    sc += 2
+
+                max_depth = max(bid_pct, ask_pct)
+                if max_depth >= 65:   sc += 2
+                elif max_depth >= 55: sc += 1
+
+                return {**p, "universe_score": sc, "adx": round(adx, 1), "trend": trend}
+            except Exception as exc:
+                logger.debug("[UNIVERSE] _score %s error: %s", p["symbol"], exc)
+                return None
+
+        raw = await asyncio.gather(*[_score(p) for p in filtered], return_exceptions=True)
+        scored = sorted(
+            [r for r in raw if isinstance(r, dict)],
+            key=lambda x: x["universe_score"],
+            reverse=True,
+        )
+        _universe_state["last_candidates"] = [
+            {"symbol": c["symbol"], "score": c["universe_score"]} for c in scored[:10]
+        ]
+
+        # Step 4 — evict expired slots (skip if active trade or in cooldown)
+        now = time.time()
+        to_evict: list[tuple[str, int]] = []
+        for sym, entry in _promoted_pairs.items():
+            if sym in open_trade_symbols:
+                continue
+            if _in_cooldown(f"{sym}LONG") or _in_cooldown(f"{sym}SHORT"):
+                continue
+            if now > entry["rotation_expires_at"]:
+                to_evict.append((sym, entry["slot_number"]))
+
+        for sym, slot in to_evict:
+            logger.info("[UNIVERSE] %s evicted from slot %d (rotation window expired)", sym, slot)
+            del _promoted_pairs[sym]
+
+        # Fill empty slots
+        used_slots  = {e["slot_number"] for e in _promoted_pairs.values()}
+        empty_slots = sorted(s for s in range(1, PROMOTED_SLOTS + 1) if s not in used_slots)
+        now_promoted = set(_promoted_pairs.keys())
+
+        for candidate in scored:
+            if not empty_slots:
+                break
+            sym = candidate["symbol"]
+            if sym in now_promoted or sym in fixed_set:
+                continue
+            slot = empty_slots.pop(0)
+            _promoted_pairs[sym] = {
+                "symbol": sym,
+                "slot_number": slot,
+                "promoted_at": int(now),
+                "universe_score": candidate["universe_score"],
+                "rotation_expires_at": int(now + ROTATION_WINDOW_MINUTES * 60),
+                "has_active_trade": False,
+            }
+            now_promoted.add(sym)
+            logger.info("[UNIVERSE] %s promoted to slot %d (score %d/7)",
+                        sym, slot, candidate["universe_score"])
+
+        _universe_state["last_scan_at"] = int(time.time())
+
+    except Exception as exc:
+        logger.error("[UNIVERSE] scan error: %s", exc)
+        _universe_state["last_scan_at"] = int(time.time())
+
+
 async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
-    tasks = [scan_pair(sym, client) for sym in PAIRS]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    all_symbols = list(PAIRS) + [s for s in _promoted_pairs if s not in PAIRS]
+    # Sequential with 0.5s delay between pairs — spaces 12 pairs over ~6s to prevent 429 bursts
+    results = []
+    for i, sym in enumerate(all_symbols):
+        if i > 0:
+            await asyncio.sleep(0.5)
+        try:
+            result = await scan_pair(sym, client)
+        except Exception as e:
+            result = e
+        results.append(result)
 
     pair_states, new_alerts = [], []
     for result in results:
