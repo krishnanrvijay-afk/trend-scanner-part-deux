@@ -32,9 +32,12 @@ from pydantic import BaseModel
 from config import (
     PAIRS, SCAN_INTERVAL_SECONDS, PRICE_INTERVAL_SECONDS,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
+    UNIVERSE_SCAN_INTERVAL_MINUTES, UNIVERSE_SCAN_ENABLED,
 )
 from hl_client import HLClient
-from scanner import run_full_scan, get_pending, set_close_cooldown, reset_scan_counter, get_cooldown_remaining
+from scanner import (run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
+                     get_cooldown_remaining, get_promoted_pairs, get_universe_state,
+                     run_universe_scan)
 
 # ── App state ─────────────────────────────────────────────────────────────────
 
@@ -76,8 +79,13 @@ class AppState:
             else:
                 pnl = (entry - current) * size
 
-            dollar_risk = t.get("dollar_risk") or (margin * (t.get("sl_pct", 1) / 100))
-            r = round(pnl / dollar_risk, 2) if dollar_risk else 0
+            leverage = t.get("leverage", DEFAULT_LEVERAGE)
+            dollar_risk_usd = (
+                t.get("dollar_risk_usd") or
+                t.get("dollar_risk") or
+                (margin * leverage * (t.get("sl_pct", 1) / 100))
+            )
+            r = round(pnl / dollar_risk_usd, 2) if dollar_risk_usd else 0
 
             trades_serialised[k] = {
                 **t,
@@ -173,6 +181,8 @@ class AppState:
             "trade_log": self.trade_log,
             "closest_pair": closest_pair,
             "market_snapshot": market_snapshot,
+            "promoted_pairs": get_promoted_pairs(),
+            "universe_state": get_universe_state(),
         }
 
 
@@ -188,6 +198,20 @@ def _retire_alert(symbol: str, direction: str):
         a for a in app_state.alerts
         if not (a["symbol"] == symbol and a["direction"] == direction)
     ]
+
+
+# ── R value helper ────────────────────────────────────────────────────────────
+
+def _calc_r(entry: float, close: float, direction: str, sl_dist) -> float:
+    """Pure price-ratio R.
+    SL exit  → −1.0 exactly.  TP1 exit (1.5× sl) → +1.5.  TP2 exit (2.0× sl) → +2.0.
+    Dollar PnL should satisfy: pnl ≈ r × dollar_risk  (where dollar_risk = margin × lev × sl_pct%)."""
+    d = float(sl_dist) if sl_dist else 0.0
+    if d <= 0:
+        return 0.0
+    if direction == "LONG":
+        return round((close - entry) / d, 2)
+    return round((entry - close) / d, 2)
 
 
 # ── Trade log helper ──────────────────────────────────────────────────────────
@@ -232,6 +256,15 @@ async def _do_open_trade(
     entry = result["entry_price"]
     size = result.get("size", (margin_usdc * leverage) / entry if entry else 0)
 
+    # dollar_risk_usd: authoritative 1R dollar amount = margin × leverage × sl_pct%
+    # Computed explicitly at open time so every close handler has an unambiguous value.
+    _sl_pct = (alert_data.get("sl_pct") or 0.0) if alert_data else 0.0
+    if _sl_pct:
+        dollar_risk_usd = round(margin_usdc * leverage * (_sl_pct / 100), 2)
+    else:
+        # Fallback: use pre-computed dollar_risk from alert, or 0 if unavailable
+        dollar_risk_usd = round(float(alert_data["dollar_risk"]), 2) if alert_data and alert_data.get("dollar_risk") else 0.0
+
     trade = {
         "symbol": symbol,
         "direction": direction,
@@ -242,11 +275,13 @@ async def _do_open_trade(
         "leverage": leverage,
         "opened_at": int(time.time()),
         "paper": result.get("paper", True),
-        "sl_price": alert_data["sl_price"] if alert_data else None,
-        "sl_pct": alert_data["sl_pct"] if alert_data else None,
-        "dollar_risk": alert_data["dollar_risk"] if alert_data else None,
-        "tp1_price": alert_data["tp1_price"] if alert_data else None,
-        "tp2_price": alert_data["tp2_price"] if alert_data else None,
+        "sl_price":       alert_data["sl_price"]    if alert_data else None,
+        "sl_pct":         alert_data["sl_pct"]      if alert_data else None,
+        "sl_distance":    alert_data.get("sl_distance") if alert_data else None,
+        "dollar_risk":    dollar_risk_usd,
+        "dollar_risk_usd": dollar_risk_usd,
+        "tp1_price":      alert_data["tp1_price"]   if alert_data else None,
+        "tp2_price":      alert_data["tp2_price"]   if alert_data else None,
         "score": alert_data.get("score") if alert_data else None,
         "adx": alert_data.get("adx") if alert_data else None,
         "tp1_hit": False,
@@ -255,6 +290,13 @@ async def _do_open_trade(
     app_state.open_trades[key] = trade
     app_state.margin_deployed += margin_usdc
     app_state.trades_opened += 1
+
+    sl_d = trade.get("sl_distance") or (entry * 0.01)
+    print(
+        f"[TRADE] {symbol} {direction} entry={entry:.6f} "
+        f"sl_distance={sl_d:.6f} sl_price={trade.get('sl_price', 0):.6f} "
+        f"risk_pct={trade.get('sl_pct', 1):.2f}% dollar_risk=${trade.get('dollar_risk', 0):.2f}"
+    )
 
     for a in app_state.alerts:
         if a["symbol"] == symbol and a["direction"] == direction:
@@ -320,12 +362,18 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
     sym = trade["symbol"]
     direction = trade["direction"]
     entry = trade["entry_price"]
-    dollar_risk = trade.get("dollar_risk") or (trade["margin"] * (trade.get("sl_pct", 1) / 100))
+    dollar_risk_usd = (
+        trade.get("dollar_risk_usd") or
+        trade.get("dollar_risk") or
+        (trade["margin"] * trade["leverage"] * (trade.get("sl_pct", 1) / 100))
+    )
 
     if reason == "TP1_PARTIAL":
         half = trade.get("remaining_size", trade["size"]) / 2
         pnl = ((close_price - entry) if direction == "LONG" else (entry - close_price)) * half
-        r = round(pnl / (dollar_risk / 2), 2) if dollar_risk else 0
+        r = round(pnl / dollar_risk_usd, 2) if dollar_risk_usd else 0.0
+        if not (-1.5 <= r <= 3.0):
+            print(f"[R WARNING] {sym} {direction} r_value={r} outside expected range")
         _append_trade_log(trade, close_price, "TP1_PARTIAL", pnl, r)
 
         trade["tp1_hit"] = True
@@ -333,21 +381,26 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
         trade["size"] = half
         trade["sl_price"] = entry
         app_state.open_trades[key] = trade
-        print(f"[auto-exit] {sym} {direction} TP1 at {close_price:.4f} — partial, SL→entry {entry:.4f}, PnL=${pnl:.2f}")
+        print(f"[auto-exit] {sym} {direction} TP1 at {close_price:.4f} — partial, SL→entry {entry:.4f}, PnL=${pnl:.2f}, R={r:+.2f}, 1R=${dollar_risk_usd:.2f}")
 
     else:
         remaining = trade.get("remaining_size", trade["size"])
         pnl = ((close_price - entry) if direction == "LONG" else (entry - close_price)) * remaining
-        r_basis = (dollar_risk / 2) if trade.get("tp1_hit") else dollar_risk
-        r = round(pnl / r_basis, 2) if r_basis else 0
+        r = round(pnl / dollar_risk_usd, 2) if dollar_risk_usd else 0.0
+        if not (-1.5 <= r <= 3.0):
+            print(f"[R WARNING] {sym} {direction} r_value={r} outside expected range")
         _append_trade_log(trade, close_price, reason, pnl, r)
+
+        print(
+            f"[TRADE CLOSE] {sym} {direction} exit={reason} pnl=${pnl:.2f} r={r:+.2f} "
+            f"sl_pct={trade.get('sl_pct', 0):.2f}% 1R=${dollar_risk_usd:.2f}"
+        )
 
         app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
         del app_state.open_trades[key]
         _retire_alert(sym, direction)
         set_close_cooldown(sym, direction)
         reset_scan_counter(sym, direction)
-        print(f"[auto-exit] {sym} {direction} {reason} at {close_price:.4f}, PnL=${pnl:.2f}, R={r}")
 
 
 # ── Background tasks ──────────────────────────────────────────────────────────
@@ -406,7 +459,8 @@ async def price_loop():
     while True:
         try:
             prices = await hl_client.get_all_prices()
-            for sym in PAIRS:
+            active_syms = set(PAIRS) | {pp["symbol"] for pp in get_promoted_pairs()}
+            for sym in active_syms:
                 if sym in prices:
                     app_state.prices[sym] = prices[sym]
             if PAPER_MODE and app_state.open_trades:
@@ -414,6 +468,17 @@ async def price_loop():
         except Exception as e:
             print(f"[price_loop] Error: {e}")
         await asyncio.sleep(PRICE_INTERVAL_SECONDS)
+
+
+async def universe_loop():
+    global app_state, hl_client
+    while True:
+        try:
+            open_syms = {t["symbol"] for t in app_state.open_trades.values()}
+            await run_universe_scan(hl_client, open_syms)
+        except Exception as e:
+            print(f"[universe_loop] Error: {e}")
+        await asyncio.sleep(UNIVERSE_SCAN_INTERVAL_MINUTES * 60)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -424,13 +489,17 @@ async def lifespan(app: FastAPI):
     hl_client = HLClient()
     print("[startup] HLClient initialized")
 
-    scan_task = asyncio.create_task(scan_loop())
-    price_task = asyncio.create_task(price_loop())
+    scan_task     = asyncio.create_task(scan_loop())
+    price_task    = asyncio.create_task(price_loop())
+    # Universe scanner disabled — reintroduce in Phase 2
+    universe_task = asyncio.create_task(universe_loop()) if UNIVERSE_SCAN_ENABLED else None
 
     yield
 
     scan_task.cancel()
     price_task.cancel()
+    if universe_task:
+        universe_task.cancel()
     await hl_client.close()
 
 
@@ -532,10 +601,20 @@ async def close_trade(req: CloseTradeRequest):
     else:
         pnl = (entry - close_price) * remaining
 
-    dollar_risk = trade.get("dollar_risk") or (trade["margin"] * (trade.get("sl_pct", 1) / 100))
-    r_basis = (dollar_risk / 2) if trade.get("tp1_hit") else dollar_risk
-    r = round(pnl / r_basis, 2) if r_basis else 0
+    dollar_risk_usd = (
+        trade.get("dollar_risk_usd") or
+        trade.get("dollar_risk") or
+        (trade["margin"] * trade["leverage"] * (trade.get("sl_pct", 1) / 100))
+    )
+    r = round(pnl / dollar_risk_usd, 2) if dollar_risk_usd else 0.0
+    if not (-1.5 <= r <= 3.0):
+        print(f"[R WARNING] {req.symbol} {req.direction} r_value={r} outside expected range")
     _append_trade_log(trade, close_price, "MANUAL", pnl, r)
+
+    print(
+        f"[TRADE CLOSE] {req.symbol} {req.direction} exit=MANUAL pnl=${pnl:.2f} r={r:+.2f} "
+        f"sl_pct={trade.get('sl_pct', 0):.2f}% 1R=${dollar_risk_usd:.2f}"
+    )
 
     app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
     closed_trade = {**trade, "close_price": close_price, "final_pnl": round(pnl, 2)}
