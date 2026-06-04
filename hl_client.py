@@ -138,6 +138,50 @@ class HLClient:
             print(f"[HLClient] get_funding_rate({symbol}) error: {e}")
             return None
 
+    # ── HL public endpoints used for universe metadata ──────────────────────
+    # Single bulk call: POST /info {"type": "metaAndAssetCtxs"}
+    # Returns [meta, assetCtxs] where:
+    #   meta.universe[i]  = {name, szDecimals, maxLeverage, onlyIsolated, ...}
+    #   assetCtxs[i]      = {funding, openInterest, prevDayPx, dayNtlVlm,
+    #                         premium, oraclePx, markPx, midPx, impactPxs}
+    # Volume  → dayNtlVlm          (24h notional, already in USD)
+    # OI USD  → openInterest * markPx  (openInterest is in token units)
+    # Funding → funding             (per-8h rate as decimal, e.g. 0.0001 = 0.01%)
+    # One call covers all three fields — no per-asset fetches needed.
+    async def get_universe_metadata(self) -> list[dict]:
+        try:
+            data = await self._post({"type": "metaAndAssetCtxs"})
+            meta = data[0]
+            asset_ctxs = data[1]
+            universe = meta.get("universe", [])
+            result = []
+            for i, asset in enumerate(universe):
+                if i >= len(asset_ctxs):
+                    break
+                ctx = asset_ctxs[i]
+                symbol = asset.get("name", "")
+                if not symbol:
+                    continue
+                try:
+                    mark_px   = float(ctx.get("markPx") or ctx.get("oraclePx") or 0)
+                    oi_tokens = float(ctx.get("openInterest") or 0)
+                    oi_usd    = oi_tokens * mark_px
+                    volume_usd = float(ctx.get("dayNtlVlm") or 0)
+                    funding    = float(ctx.get("funding") or 0)
+                except (TypeError, ValueError):
+                    continue
+                result.append({
+                    "symbol": symbol,
+                    "volume_24h_usd": volume_usd,
+                    "open_interest_usd": oi_usd,
+                    "funding_rate": funding,
+                    "mark_px": mark_px,
+                })
+            return result
+        except Exception as e:
+            print(f"[HLClient] get_universe_metadata error: {e}")
+            return []
+
     async def get_open_positions(self) -> list[dict]:
         if self._paper_mode:
             return []
