@@ -249,10 +249,11 @@ function renderHeader() {
   if (closestEl) {
     if (cp && cp.gates_passing > 0) {
       const dirColor = cp.direction === 'LONG' ? '#00ff88' : '#ff4444';
+      const hcFail   = cp.failing_gate ? `<span style="color:#ff4444;font-size:9px"> ${cp.failing_gate}✕</span>` : '';
       closestEl.innerHTML =
         `<span style="color:#fff">${cp.symbol}</span>&nbsp;` +
         `<span style="color:${dirColor}">${cp.direction}</span>&nbsp;` +
-        `<span style="color:#ffaa00">${cp.gates_passing}/4</span>`;
+        `<span style="color:#ffaa00">${cp.gates_passing}/4</span>${hcFail}`;
     } else {
       closestEl.textContent = '—';
       closestEl.style.color = '#444';
@@ -288,11 +289,12 @@ function renderScanPulse() {
   if (cpEl) {
     if (cp && cp.gates_passing > 0) {
       const dirColor = cp.direction === 'LONG' ? '#00ff88' : '#ff4444';
+      const failStr  = cp.failing_gate ? ` — ${cp.failing_gate} failing` : '';
       cpEl.innerHTML =
         `<span style="color:#ffffff">closest:</span> ` +
         `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
         `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
-        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4 gates)</span>`;
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4${failStr})</span>`;
     } else {
       cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
     }
