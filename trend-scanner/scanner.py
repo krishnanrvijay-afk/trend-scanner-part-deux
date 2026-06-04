@@ -476,7 +476,8 @@ def score_tc_short(
         reasons = []
         if not p3: reasons.append("P3 ma not aligned bear")
         if not p4: reasons.append(
-            "P4 rsi_5m not oversold+rising" if is_capitulation else "P4 rsi_5m not falling from overbought"
+            f"P4 rsi_5m not rising from oversold (rsi_5m={rsi_5m:.1f} prev={rsi_5m_prev:.1f})" if is_capitulation
+            else f"P4 rsi_5m not falling from overbought (rsi_5m={rsi_5m:.1f} prev={rsi_5m_prev:.1f})"
         )
         if not p5: reasons.append("P5 rsi_1h above 50")
         if not p6: reasons.append(
@@ -774,8 +775,16 @@ async def run_universe_scan(client: HLClient, open_trade_symbols: set) -> None:
 
 async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
     all_symbols = list(PAIRS) + [s for s in _promoted_pairs if s not in PAIRS]
-    tasks = [scan_pair(sym, client) for sym in all_symbols]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Sequential with 0.5s delay between pairs — spaces 12 pairs over ~6s to prevent 429 bursts
+    results = []
+    for i, sym in enumerate(all_symbols):
+        if i > 0:
+            await asyncio.sleep(0.5)
+        try:
+            result = await scan_pair(sym, client)
+        except Exception as e:
+            result = e
+        results.append(result)
 
     pair_states, new_alerts = [], []
     for result in results:
