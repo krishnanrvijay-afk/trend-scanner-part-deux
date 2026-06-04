@@ -5,6 +5,7 @@ httpx
 websockets
 pandas
 numpy
+pandas-ta>=0.3.14b
 python-dotenv
 hyperliquid-python-sdk==0.23.0
 eth-account
