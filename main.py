@@ -109,19 +109,24 @@ class AppState:
         pair_order = {sym: i for i, sym in enumerate(PAIRS)}
         pair_states_out.sort(key=lambda ps: pair_order.get(ps.get("symbol", ""), 999))
 
-        # Closest pair: most gates passing (1–3) without all 4 (not yet triggered)
+        # Closest pair: most gates passing (1–3) without all 4, tiebreak ADX descending
         closest_pair = None
         max_gates = -1
+        max_adx_seen = -1.0
         for ps in pair_states_out:
             gs = ps.get("gates_status", {})
             gp = gs.get("gates_passing", 0)
-            if 0 < gp < 4 and gp > max_gates:
-                max_gates = gp
-                closest_pair = {
-                    "symbol": ps["symbol"],
-                    "direction": gs.get("gates_direction", "NONE"),
-                    "gates_passing": gp,
-                }
+            adx = ps.get("adx", 0.0)
+            if 0 < gp < 4:
+                if gp > max_gates or (gp == max_gates and adx > max_adx_seen):
+                    max_gates    = gp
+                    max_adx_seen = adx
+                    closest_pair = {
+                        "symbol":       ps["symbol"],
+                        "direction":    gs.get("gates_direction", "NONE"),
+                        "gates_passing": gp,
+                        "failing_gate": gs.get("failing_gate"),   # None unless exactly 3/4
+                    }
 
         # Market snapshot — categorise each pair across four dimensions
         trend_bias     = {"strong_bull": [], "strong_bear": [], "neutral": []}
