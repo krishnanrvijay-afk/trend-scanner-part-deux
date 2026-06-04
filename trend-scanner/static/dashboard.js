@@ -2,6 +2,7 @@
 
 let state = null;
 let lastScanCount = -1;
+let prevAlertTradeCount = -1;
 const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -48,6 +49,51 @@ function scoreClass(n) {
 function rsiColor(v) {
   if (v == null || isNaN(v)) return '#ffffff';
   return v <= 35 ? '#00ff88' : v >= 65 ? '#ff4444' : '#ffffff';
+}
+
+// ── Tab management ─────────────────────────────────────────────────────────────
+
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById(`tab-btn-${tabId}`);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  const activeContent = document.getElementById(`tab-${tabId}`);
+  if (activeContent) activeContent.classList.add('active');
+
+  const tlActions = document.getElementById('tradelog-tab-actions');
+  if (tlActions) tlActions.style.display = tabId === 'tradelog' ? 'flex' : 'none';
+
+  try { localStorage.setItem('tsp_active_tab', tabId); } catch(e) {}
+}
+
+function updateAlertBadge() {
+  if (!state) return;
+  const alerts     = state.alerts || [];
+  const openTrades = state.open_trades || {};
+  const total      = alerts.length + Object.keys(openTrades).length;
+
+  const badge = document.getElementById('alert-badge');
+  if (badge) {
+    if (total > 0) {
+      badge.textContent  = `(${total})`;
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  // Flash the tab label when count increases (new alert or new trade)
+  if (prevAlertTradeCount !== -1 && total > prevAlertTradeCount) {
+    const btn = document.getElementById('tab-btn-alerts');
+    if (btn) {
+      btn.classList.remove('tab-flash');
+      void btn.offsetWidth; // force reflow to restart animation
+      btn.classList.add('tab-flash');
+    }
+  }
+  prevAlertTradeCount = total;
 }
 
 function showToast(msg, duration = 4000) {
@@ -593,6 +639,7 @@ function renderAll() {
   renderMarketSnapshot();
   renderAlerts();
   renderTradeLog();
+  updateAlertBadge();
 }
 
 // ── Trade log render ──────────────────────────────────────────────────────────
@@ -671,6 +718,12 @@ async function poll() {
   await fetchState();
   renderAll();
 }
+
+// Restore last active tab from localStorage
+try {
+  const savedTab = localStorage.getItem('tsp_active_tab');
+  if (savedTab) switchTab(savedTab);
+} catch(e) {}
 
 // Initial load
 poll();
