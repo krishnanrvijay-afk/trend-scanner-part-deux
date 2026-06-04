@@ -547,6 +547,78 @@
     .log-table tbody tr:last-child td { border-bottom: none; }
     .log-table tbody tr:hover { background: var(--surface2); }
 
+    /* ── Redesigned alert card (.ac) ────────────────────────── */
+    .ac {
+      background: #0d0d0d;
+      border: 1px solid #222222;
+      border-radius: 8px;
+      padding: 16px;
+      width: 360px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .ac-header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .ac-sig { display: flex; align-items: center; gap: 8px; }
+    .ac-sym { font-size: 16px; font-weight: 800; color: #ffffff; letter-spacing: 0.04em; }
+    .ac-dir-long  { padding: 2px 8px; border-radius: 4px; background: rgba(0,255,136,0.15); color: #00ff88; border: 1px solid rgba(0,255,136,0.35); font-size: 10px; font-weight: 800; letter-spacing: 0.08em; }
+    .ac-dir-short { padding: 2px 8px; border-radius: 4px; background: rgba(255,68,68,0.15);  color: #ff4444; border: 1px solid rgba(255,68,68,0.35);  font-size: 10px; font-weight: 800; letter-spacing: 0.08em; }
+    .ac-score { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+    .ac-right { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+    .ac-ts { font-size: 10px; color: #555; margin-top: 3px; }
+
+    .ac-intrade-badge {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; border-radius: 5px; border: 1px solid;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+      margin-bottom: 8px;
+      animation: trade-pulse 2s infinite;
+    }
+    .ac-pnl-row {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px; padding: 8px 10px;
+      background: #111111; border-radius: 6px;
+    }
+    .ac-lv { display: flex; flex-direction: column; gap: 2px; }
+    .ac-lv-label { font-size: 9px; color: #ffffff; font-weight: 400; text-transform: uppercase; letter-spacing: 0.08em; }
+    .ac-lv-val   { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    .ac-section-label { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 5px; }
+    .ac-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+    .ac-detail-row  { display: flex; align-items: center; gap: 6px; }
+    .ac-detail-label { font-size: 10px; color: #ffffff; font-weight: 400; min-width: 74px; }
+    .ac-detail-val   { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    .ac-levels { display: flex; flex-direction: column; gap: 5px; }
+    .ac-level-row { display: flex; align-items: center; font-size: 11px; gap: 4px; }
+    .ac-lvl-tag   { min-width: 62px; font-weight: 700; font-size: 10px; letter-spacing: 0.03em; }
+    .ac-lvl-price { flex: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .ac-lvl-pct   { color: #444; font-size: 10px; margin-right: 6px; }
+    .ac-lvl-dollar { font-weight: 700; font-size: 10px; min-width: 56px; text-align: right; }
+
+    .ac-progress-wrap {
+      position: relative; height: 6px;
+      background: #1a1a1a; border-radius: 3px; overflow: visible;
+    }
+    .ac-progress-fill { height: 100%; border-radius: 3px; max-width: 100%; transition: width 0.4s ease; }
+    .ac-progress-marker {
+      position: absolute; top: 50%; transform: translate(-50%, -50%);
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #ffffff; border: 2px solid #0d0d0d;
+      box-shadow: 0 0 5px rgba(255,255,255,0.5);
+      transition: left 0.4s ease;
+    }
+    .ac-progress-labels { display: flex; justify-content: space-between; font-size: 9px; margin-top: 5px; }
+
+    .ac-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ac-elapsed { font-size: 10px; color: #555; }
+
     /* ── Tab bar ─────────────────────────────────────────────── */
     .tab-bar {
       display: flex;
