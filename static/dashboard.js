@@ -70,14 +70,19 @@ function switchTab(tabId) {
 
 function updateAlertBadge() {
   if (!state) return;
-  const alerts     = state.alerts || [];
-  const openTrades = state.open_trades || {};
-  const total      = alerts.length + Object.keys(openTrades).length;
+  const openTrades    = state.open_trades || {};
+  const openTradeKeys = new Set(Object.keys(openTrades)); // e.g. "BTCLONG"
+  const alerts        = state.alerts || [];
+
+  // Count open positions once, plus confirmed alerts that don't have a matching
+  // open trade yet (unacted). Never count pending-reconfirmation cards.
+  const unactedAlerts = alerts.filter(a => !openTradeKeys.has(`${a.symbol}${a.direction}`));
+  const total = openTradeKeys.size + unactedAlerts.length;
 
   const badge = document.getElementById('alert-badge');
   if (badge) {
     if (total > 0) {
-      badge.textContent  = `(${total})`;
+      badge.textContent   = `(${total})`;
       badge.style.display = 'inline-flex';
     } else {
       badge.style.display = 'none';
@@ -89,7 +94,7 @@ function updateAlertBadge() {
     const btn = document.getElementById('tab-btn-alerts');
     if (btn) {
       btn.classList.remove('tab-flash');
-      void btn.offsetWidth; // force reflow to restart animation
+      void btn.offsetWidth;
       btn.classList.add('tab-flash');
     }
   }
@@ -180,33 +185,82 @@ function renderHeader() {
   if (!state) return;
   const acc = state.account || {};
   const pct = acc.cap_pct || 0;
+  const capColor = pct >= 90 ? '#ff4444' : pct >= 70 ? '#ffaa00' : '#00ff88';
 
-  document.getElementById('margin-deployed').textContent =
-    `${fmt(acc.margin_deployed, 0)} / ${fmt(acc.cap, 0)} USDC`;
-
-  document.getElementById('trade-count').textContent =
-    `${acc.trades_opened ?? 0} opened`;
-
-  const pctLabel = document.getElementById('cap-pct-label');
-  pctLabel.textContent = `${fmt(pct, 1)}%`;
-  if (pct >= 90)       pctLabel.style.color = 'var(--red)';
-  else if (pct >= 70)  pctLabel.style.color = 'var(--yellow)';
-  else                 pctLabel.style.color = 'var(--text)';
-
-  const bar = document.getElementById('cap-bar');
-  bar.style.width = Math.min(pct, 100) + '%';
-  bar.className = 'cap-bar-fill ' + (pct >= 90 ? 'cap-red' : pct >= 70 ? 'cap-yellow' : 'cap-green');
-
-  const lastScan = state.last_scan_at;
-  if (lastScan) {
-    document.getElementById('scan-ago').textContent = relTime(lastScan);
+  // ── Left card ────────────────────────────────────────────────
+  const marginEl = document.getElementById('hc-margin');
+  if (marginEl) {
+    marginEl.textContent = `${fmt(acc.margin_deployed, 0)} / ${fmt(acc.cap, 0)} USDC`;
+    marginEl.style.color = capColor;
   }
 
-  const deployEl = document.getElementById('deploy-time');
+  const tradesEl = document.getElementById('hc-trades');
+  if (tradesEl) tradesEl.textContent = `${acc.trades_opened ?? 0} opened`;
+
+  const capPctEl = document.getElementById('hc-cap-pct');
+  if (capPctEl) {
+    capPctEl.textContent = `${fmt(pct, 1)}%`;
+    capPctEl.style.color = capColor;
+  }
+
+  const capBar = document.getElementById('hc-cap-bar');
+  if (capBar) {
+    capBar.style.width = Math.min(pct, 100) + '%';
+    capBar.className = 'hc-capbar-fill ' + (pct >= 90 ? 'cap-red' : pct >= 70 ? 'cap-yellow' : 'cap-green');
+  }
+
+  const lastScan = state.last_scan_at;
+  const scanAgoEl = document.getElementById('hc-scan-ago');
+  if (scanAgoEl && lastScan) scanAgoEl.textContent = relTime(lastScan);
+
+  const deployEl = document.getElementById('hc-deploy-time');
   if (deployEl && state.deploy_time && !deployEl.dataset.set) {
     deployEl.textContent = 'DEPLOYED ' + state.deploy_time;
     deployEl.dataset.set = '1';
   }
+
+  // ── Right card: Market Snapshot summary ──────────────────────
+  const ms = state.market_snapshot || {};
+  const tb = ms.trend_bias || {};
+  const bearCount = (tb.strong_bear || []).length;
+  const bullCount = (tb.strong_bull || []).length;
+  const neutCount = (tb.neutral    || []).length;
+
+  const trendEl = document.getElementById('hc-trend-val');
+  if (trendEl) {
+    trendEl.innerHTML =
+      `<span style="color:#ff4444">${bearCount} BEAR</span>` +
+      `<span style="color:#333"> · </span>` +
+      `<span style="color:#00ff88">${bullCount} BULL</span>` +
+      `<span style="color:#333"> · </span>` +
+      `<span style="color:#888">${neutCount} NEU</span>`;
+  }
+
+  const pairs = state.pair_states || [];
+  const adxStrongCount = pairs.filter(p => (p.adx || 0) >= 50).length;
+  const adxEl = document.getElementById('hc-adx-strong');
+  if (adxEl) {
+    adxEl.textContent = adxStrongCount + ' pairs';
+    adxEl.style.color = adxStrongCount > 0 ? '#00ff88' : '#666666';
+  }
+
+  const cp = state.closest_pair;
+  const closestEl = document.getElementById('hc-closest');
+  if (closestEl) {
+    if (cp && cp.gates_passing > 0) {
+      const dirColor = cp.direction === 'LONG' ? '#00ff88' : '#ff4444';
+      closestEl.innerHTML =
+        `<span style="color:#fff">${cp.symbol}</span>&nbsp;` +
+        `<span style="color:${dirColor}">${cp.direction}</span>&nbsp;` +
+        `<span style="color:#ffaa00">${cp.gates_passing}/4</span>`;
+    } else {
+      closestEl.textContent = '—';
+      closestEl.style.color = '#444';
+    }
+  }
+
+  const sigEl = document.getElementById('hc-signals');
+  if (sigEl) sigEl.textContent = (state.alerts || []).length;
 }
 
 // ── Scan pulse strip render ───────────────────────────────────────────────────
