@@ -124,18 +124,9 @@
       50% { opacity: 0.3; }
     }
 
-    /* ── Main layout ─────────────────────────────────────────── */
-    .main {
-      display: grid;
-      grid-template-columns: 1fr 360px;
-      gap: 0;
-      height: calc(100vh - 90px);
-    }
-
     /* ── Pair table ──────────────────────────────────────────── */
     .table-panel {
-      overflow-y: auto;
-      border-right: 1px solid var(--border);
+      width: 100%;
     }
 
     table {
@@ -152,9 +143,6 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
       color: var(--muted);
-      position: sticky;
-      top: 0;
-      z-index: 10;
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
@@ -185,55 +173,35 @@
     .score-med  { color: var(--yellow); }
     .score-low  { color: var(--muted); }
 
-    /* ── Alerts panel ────────────────────────────────────────── */
-    .alerts-panel {
-      display: flex;
-      flex-direction: column;
-      overflow-y: auto;
-      background: var(--surface);
-    }
-
-    .alerts-header {
-      padding: 12px 16px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      background: var(--surface);
-      z-index: 10;
-    }
-
+    /* ── Alert cards ─────────────────────────────────────────── */
     .alerts-empty {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex: 1;
       color: var(--muted);
       font-size: 12px;
-      padding: 40px 20px;
+      padding: 48px 20px;
       text-align: center;
       line-height: 1.8;
     }
 
     .alerts-list {
       display: flex;
-      flex-direction: column;
-      gap: 0;
-      padding: 0;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 16px 20px;
     }
 
     /* ── Alert card ──────────────────────────────────────────── */
     .alert-card {
-      border-bottom: 1px solid var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
       padding: 14px 16px;
       position: relative;
       transition: background 0.15s;
+      width: 340px;
+      flex-shrink: 0;
+      background: var(--surface2);
     }
-    .alert-card:hover { background: var(--surface2); }
+    .alert-card:hover { background: #1e2333; }
 
     .alert-card.in-trade {
       border-left: 3px solid var(--green);
@@ -363,6 +331,31 @@
       gap: 4px;
     }
 
+    /* ── Slot badge (promoted pairs) ────────────────────────── */
+    .slot-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      border: 1px solid #ffaa00;
+      color: #ffaa00;
+      margin-right: 5px;
+      flex-shrink: 0;
+      vertical-align: middle;
+    }
+    .promoted-divider td {
+      padding: 5px 12px;
+      text-align: center;
+      color: #555;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      background: #0d0f14;
+      border-bottom: 1px solid var(--border);
+    }
+
     /* ── Scrollbars ──────────────────────────────────────────── */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -481,26 +474,6 @@
     #toast.show { transform: translateX(-50%) translateY(0); }
 
     /* ── Trade log ───────────────────────────────────────────── */
-    .log-panel {
-      margin: 0 20px 24px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    .log-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--border);
-    }
-    .log-title {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: .1em;
-      color: var(--muted);
-    }
     .pill-download {
       background: rgba(0,255,136,.12);
       border: 1px solid rgba(0,255,136,.3);
@@ -514,7 +487,7 @@
       cursor: pointer;
     }
     .log-empty {
-      padding: 24px;
+      padding: 48px;
       text-align: center;
       color: var(--muted);
       font-size: 12px;
@@ -544,6 +517,61 @@
     }
     .log-table tbody tr:last-child td { border-bottom: none; }
     .log-table tbody tr:hover { background: var(--surface2); }
+
+    /* ── Tab bar ─────────────────────────────────────────────── */
+    .tab-bar {
+      display: flex;
+      align-items: stretch;
+      background: var(--surface);
+      border-bottom: 2px solid var(--border);
+      padding: 0 16px;
+    }
+    .tab-btn {
+      padding: 10px 18px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      font-family: var(--font);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: -2px;
+      white-space: nowrap;
+      transition: color 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: #ffffff; border-bottom-color: #00ff88; }
+    .tab-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: rgba(255,170,0,0.15);
+      border: 1px solid rgba(255,170,0,0.35);
+      color: #ffaa00;
+      font-size: 9px;
+      font-weight: 700;
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .tab-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+    }
+    @keyframes tab-label-flash {
+      0%, 100% { color: var(--muted); }
+      30%, 70%  { color: #ffaa00; }
+    }
+    .tab-flash { animation: tab-label-flash 0.6s ease-in-out 3; }
   </style>
 </head>
 <body>
@@ -603,10 +631,22 @@
   </span>
 </div>
 
-<!-- Main -->
-<div class="main">
+<!-- Tab bar -->
+<div class="tab-bar">
+  <button id="tab-btn-scanner"  class="tab-btn active" onclick="switchTab('scanner')">SCANNER</button>
+  <button id="tab-btn-alerts"   class="tab-btn"        onclick="switchTab('alerts')">
+    ALERTS &amp; TRADES
+    <span id="alert-badge" class="tab-badge" style="display:none"></span>
+  </button>
+  <button id="tab-btn-tradelog" class="tab-btn"        onclick="switchTab('tradelog')">TRADE LOG</button>
+  <div class="tab-actions" id="tradelog-tab-actions" style="display:none">
+    <a href="/api/tradelog/csv" class="pill pill-download" style="text-decoration:none;padding:5px 12px;font-size:10px">↓ CSV</a>
+    <button id="clear-log-btn" class="pill pill-clear" style="padding:5px 12px;font-size:10px" onclick="clearTradeLog()">✕ CLEAR LOG</button>
+  </div>
+</div>
 
-  <!-- Pair table -->
+<!-- TAB 1: SCANNER -->
+<div id="tab-scanner" class="tab-content active">
   <div class="table-panel">
     <table>
       <thead>
@@ -618,7 +658,7 @@
           <th>J</th>
           <th>B%</th>
           <th>S%</th>
-          <th style="text-align:center">TADJ</th>
+          <th style="text-align:center">GATES</th>
           <th>Signal</th>
         </tr>
       </thead>
@@ -638,28 +678,19 @@
       </div>
     </div>
   </div>
-
-  <!-- Alerts panel -->
-  <div class="alerts-panel">
-    <div class="alerts-header">Alerts &amp; Trades</div>
-    <div id="alerts-container">
-      <div class="alerts-empty">
-        Scanning every 20s.<br>Alerts appear here when<br>TC conditions are met twice.
-      </div>
-    </div>
-  </div>
-
 </div>
 
-<!-- Trade Log -->
-<div class="log-panel">
-  <div class="log-header">
-    <span class="log-title">TRADE LOG</span>
-    <div style="display:flex;gap:8px">
-      <a href="/api/tradelog/csv" class="pill pill-download" style="text-decoration:none">↓ CSV</a>
-      <button id="clear-log-btn" class="pill pill-clear" onclick="clearTradeLog()">✕ CLEAR LOG</button>
+<!-- TAB 2: ALERTS & TRADES -->
+<div id="tab-alerts" class="tab-content">
+  <div id="alerts-container">
+    <div class="alerts-empty">
+      Scanning every 10s.<br>Alerts appear here when TC conditions are met twice.
     </div>
   </div>
+</div>
+
+<!-- TAB 3: TRADE LOG -->
+<div id="tab-tradelog" class="tab-content">
   <div id="tradelog-container">
     <div class="log-empty">No completed trades yet.</div>
   </div>
