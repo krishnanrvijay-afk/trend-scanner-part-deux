@@ -338,8 +338,17 @@ function buildPairRowHtml(p, promotedEntry) {
   const cdSecs = cooldownEndsAt[p.symbol]
     ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
     : 0;
+
+  // IN TRADE overrides everything else in the signal column
+  const openTradesMap = state.open_trades || {};
+  const hasLongTrade  = !!openTradesMap[`${p.symbol}LONG`];
+  const hasShortTrade = !!openTradesMap[`${p.symbol}SHORT`];
+
   let sigCell;
-  if (cdSecs > 0) {
+  if (hasLongTrade || hasShortTrade) {
+    const tradeColor = hasLongTrade ? '#00ff88' : '#ff4444';
+    sigCell = `<span style="color:${tradeColor};font-size:10px;font-weight:700;letter-spacing:.06em">▶ IN TRADE</span>`;
+  } else if (cdSecs > 0) {
     const cdM = Math.floor(cdSecs / 60);
     const cdS = cdSecs % 60;
     sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m ${cdS < 10 ? '0' : ''}${cdS}s</span>`;
@@ -492,6 +501,185 @@ function renderMarketSnapshot() {
     </div>`;
 }
 
+// ── Alert card builder ────────────────────────────────────────────────────────
+
+function buildConfirmedAlertCard(alert, trade, capReached) {
+  const key    = `${alert.symbol}${alert.direction}`;
+  const inTrade = !!trade;
+  const isLong  = alert.direction === 'LONG';
+
+  const dirBadge = isLong
+    ? `<span class="ac-dir-long">LONG</span>`
+    : `<span class="ac-dir-short">SHORT</span>`;
+
+  const score    = alert.score ?? 0;
+  const scoreMax = 7;
+  const scoreColor = score >= scoreMax ? '#00ff88' : '#ffaa00';
+  const scoreChip  = `<span class="ac-score" style="background:${scoreColor}22;color:${scoreColor};border:1px solid ${scoreColor}44">${score}/${scoreMax}</span>`;
+
+  const adxColor   = (alert.adx || 0) >= 30 ? '#00ff88' : '#666666';
+  const trendColor = isLong ? '#00ff88' : '#ff4444';
+  const trendLabel = isLong ? '▲ S.Bull' : '▼ S.Bear';
+
+  const dr       = alert.dollar_risk || 0;
+  const slDollar = dr > 0 ? `-$${fmt(dr, 2)}`       : '—';
+  const tp1Dollar = dr > 0 ? `+$${fmt(dr * 1.5, 2)}` : '—';
+  const tp2Dollar = dr > 0 ? `+$${fmt(dr * 2.0, 2)}` : '—';
+
+  const tp1Hit   = !!(trade && trade.tp1_hit);
+  const slDisplay = tp1Hit
+    ? `<span style="color:#555;text-decoration:line-through;margin-right:6px">${fmtPrice(alert.sl_price)}</span><span style="color:#00ff88;font-weight:700">BREAKEVEN</span>`
+    : `<span style="color:#ff4444;font-weight:700">${fmtPrice(alert.sl_price)}</span>`;
+
+  // Progress bar: 0% = SL (worst), 100% = TP2 (best)
+  const currentPrice = (state.prices && state.prices[alert.symbol])
+    || (trade && trade.current_price)
+    || alert.entry_price;
+  const slP  = alert.sl_price;
+  const tp2P = alert.tp2_price;
+  let progressPct = 50;
+  if (slP && tp2P && currentPrice) {
+    progressPct = isLong
+      ? (currentPrice - slP) / (tp2P - slP) * 100
+      : (slP - currentPrice) / (slP - tp2P) * 100;
+    progressPct = Math.max(0, Math.min(100, progressPct));
+  }
+  // Interpolate color red→green
+  const t  = progressPct / 100;
+  const pr = Math.round(0xff + (0x00 - 0xff) * t);
+  const pg = Math.round(0x44 + (0xff - 0x44) * t);
+  const pb = Math.round(0x44 + (0x88 - 0x44) * t);
+  const fillColor = `rgb(${pr},${pg},${pb})`;
+
+  let html = `<div class="ac">`;
+
+  // ── Header
+  html += `
+    <div>
+      <div class="ac-header-top">
+        <div class="ac-sig">
+          <span class="ac-sym">${alert.symbol}</span>
+          ${dirBadge}
+          ${scoreChip}
+        </div>
+        <div class="ac-right">
+          <span style="color:${adxColor};font-weight:700">ADX ${fmt(alert.adx, 1)}</span>
+          <span style="color:${trendColor};font-weight:700">${trendLabel}</span>
+        </div>
+      </div>
+      <div class="ac-ts">${relTime(alert.fired_at)}</div>
+    </div>`;
+
+  // ── IN TRADE status
+  if (inTrade) {
+    const badgeBorder = isLong ? '#00ff88' : '#ff4444';
+    const badgeBg     = isLong ? 'rgba(0,255,136,0.07)' : 'rgba(255,68,68,0.07)';
+    const pnl      = trade.unrealized_pnl ?? 0;
+    const pnlColor = pnl >= 0 ? '#00ff88' : '#ff4444';
+    const pnlSign  = pnl >= 0 ? '+' : '';
+    const r        = trade.r ?? 0;
+    const rColor   = r >= 0 ? '#00ff88' : '#ff4444';
+    const rSign    = r >= 0 ? '+' : '';
+
+    html += `
+      <div>
+        <div class="ac-intrade-badge" style="background:${badgeBg};border-color:${badgeBorder};color:${badgeBorder}">
+          <span>● IN TRADE</span>
+          <span style="font-weight:400;color:#cccccc">${elapsed(trade.opened_at)}</span>
+        </div>
+        <div class="ac-pnl-row">
+          <div class="ac-lv">
+            <span class="ac-lv-label">Entry</span>
+            <span class="ac-lv-val" style="color:#ffffff">${fmtPrice(trade.entry_price)}</span>
+          </div>
+          <div class="ac-lv">
+            <span class="ac-lv-label">Current</span>
+            <span class="ac-lv-val" style="color:#ffffff">${fmtPrice(currentPrice)}</span>
+          </div>
+          <div class="ac-lv">
+            <span class="ac-lv-label">PnL / R</span>
+            <span class="ac-lv-val">
+              <span style="color:${pnlColor}">${pnlSign}$${fmt(pnl, 2)}</span>
+              <span style="font-size:10px;color:${rColor}"> ${rSign}${fmt(r, 2)}R</span>
+            </span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ── Position details
+  html += `
+    <div>
+      <div class="ac-section-label">Position</div>
+      <div class="ac-detail-grid">
+        <div class="ac-detail-row"><span class="ac-detail-label">MARGIN</span><span class="ac-detail-val" style="color:#ffffff">$${fmt(alert.margin, 0)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">ADX</span><span class="ac-detail-val" style="color:${adxColor}">${fmt(alert.adx, 1)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">LEVERAGE</span><span class="ac-detail-val" style="color:#ffffff">${alert.leverage}x</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">RSI 5M</span><span class="ac-detail-val" style="color:${rsiColor(alert.rsi_5m)}">${fmt(alert.rsi_5m ?? 50, 1)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">DOLLAR RISK</span><span class="ac-detail-val" style="color:#ffaa00">$${fmt(alert.dollar_risk, 2)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">RSI 1H</span><span class="ac-detail-val" style="color:${rsiColor(alert.rsi_1h)}">${fmt(alert.rsi_1h ?? 50, 1)}</span></div>
+      </div>
+    </div>`;
+
+  // ── Levels
+  const tp1Check = tp1Hit ? ` <span style="color:#00ff88">✓</span>` : '';
+  html += `
+    <div>
+      <div class="ac-section-label">Levels</div>
+      <div class="ac-levels">
+        <div class="ac-level-row">
+          <span class="ac-lvl-tag" style="color:#ff4444">SL</span>
+          <span class="ac-lvl-price">${slDisplay}</span>
+          <span class="ac-lvl-pct">(${fmt(alert.sl_pct, 2)}%)</span>
+          <span class="ac-lvl-dollar" style="color:#ffaa00">${slDollar}</span>
+        </div>
+        <div class="ac-level-row" ${tp1Hit ? 'style="opacity:0.55"' : ''}>
+          <span class="ac-lvl-tag" style="color:#ffaa00">TP1 1.5R${tp1Check}</span>
+          <span class="ac-lvl-price" style="color:#ffaa00">${fmtPrice(alert.tp1_price)}</span>
+          <span class="ac-lvl-pct"></span>
+          <span class="ac-lvl-dollar" style="color:#00ff88">${tp1Dollar}</span>
+        </div>
+        <div class="ac-level-row">
+          <span class="ac-lvl-tag" style="color:#00ff88">TP2 2.0R</span>
+          <span class="ac-lvl-price" style="color:#00ff88">${fmtPrice(alert.tp2_price)}</span>
+          <span class="ac-lvl-pct"></span>
+          <span class="ac-lvl-dollar" style="color:#00ff88">${tp2Dollar}</span>
+        </div>
+      </div>
+    </div>`;
+
+  // ── Progress bar
+  html += `
+    <div>
+      <div class="ac-progress-wrap">
+        <div class="ac-progress-fill" style="width:${progressPct.toFixed(1)}%;background:${fillColor}"></div>
+        <div class="ac-progress-marker" style="left:${progressPct.toFixed(1)}%"></div>
+      </div>
+      <div class="ac-progress-labels">
+        <span style="color:#ff4444">SL ${fmtPrice(slP)}</span>
+        <span style="color:#00ff88">TP2 ${fmtPrice(tp2P)}</span>
+      </div>
+    </div>`;
+
+  // ── Footer
+  html += `<div class="ac-footer"><span class="ac-elapsed">Fired ${relTime(alert.fired_at)}</span>`;
+  if (!inTrade) {
+    const autoInfo = (state.auto_pending || {})[key];
+    if (autoInfo) {
+      const remaining = Math.max(0, Math.ceil(autoInfo.fire_at - Date.now() / 1000));
+      const label = remaining > 0 ? `AUTO IN ${remaining}s` : 'OPENING…';
+      html += `<button class="pill pill-open" style="background:#ffaa00;color:#000;cursor:default;min-width:100px" data-auto-key="${key}">${label}</button>`;
+    } else {
+      const disabled = capReached ? 'disabled title="Margin cap reached"' : '';
+      html += `<button class="pill pill-open" ${disabled} onclick="openTrade('${alert.symbol}', '${alert.direction}')">▶ OPEN TRADE</button>`;
+    }
+  } else {
+    html += `<button class="pill pill-close" onclick="closeTrade('${alert.symbol}', '${alert.direction}')">■ CLOSE TRADE</button>`;
+  }
+  html += `</div></div>`;
+  return html;
+}
+
 // ── Alerts render ─────────────────────────────────────────────────────────────
 
 function renderAlerts() {
@@ -559,125 +747,11 @@ function renderAlerts() {
       </div>`;
   }
 
-  // ── Confirmed alert cards ─────────────────────────────────────────────────
+  // ── Confirmed alert cards (new design) ───────────────────────────────────
   for (const alert of alerts) {
-    const key = `${alert.symbol}${alert.direction}`;
+    const key   = `${alert.symbol}${alert.direction}`;
     const trade = openTrades[key];
-    const inTrade = !!trade;
-    const isLong = alert.direction === 'LONG';
-
-    const cardClass = inTrade
-      ? (isLong ? 'alert-card in-trade' : 'alert-card in-trade-short')
-      : 'alert-card';
-
-    html += `<div class="${cardClass}">`;
-
-    // IN TRADE badge
-    if (inTrade) {
-      const badgeClass = isLong ? 'in-trade-badge' : 'in-trade-badge short-badge';
-      html += `
-        <div class="${badgeClass}">
-          <span>● IN TRADE</span>
-          <span style="opacity:0.7">${elapsed(trade.opened_at)}</span>
-        </div>`;
-
-      // Live PnL row
-      const pnl = trade.unrealized_pnl ?? 0;
-      const pnlColor = pnl >= 0 ? '#00ff88' : '#ff4444';
-      const pnlSign = pnl >= 0 ? '+' : '';
-      const r = trade.r ?? 0;
-      const rColor = r >= 0 ? '#00ff88' : '#ff4444';
-      const rSign = r >= 0 ? '+' : '';
-      const currentPrice = (state.prices && state.prices[alert.symbol]) || trade.current_price;
-
-      html += `
-        <div class="live-row">
-          <div class="ag-row">
-            <span class="ag-label">Entry</span>
-            <span class="ag-val">${fmtPrice(trade.entry_price)}</span>
-          </div>
-          <div class="ag-row">
-            <span class="ag-label">Current</span>
-            <span class="ag-val">${fmtPrice(currentPrice)}</span>
-          </div>
-          <div class="ag-row">
-            <span class="ag-label">PnL / R</span>
-            <span class="ag-val"><span style="color:${pnlColor}">${pnlSign}$${fmt(pnl, 2)}</span> <span style="font-size:10px;color:${rColor}">${rSign}${fmt(r, 2)}R</span></span>
-          </div>
-        </div>`;
-    }
-
-    // Signal header row
-    html += `
-      <div class="alert-header-row">
-        <div class="alert-sig">
-          <span class="alert-sym">${alert.symbol}</span>
-          <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${alert.direction}</span>
-        </div>
-        <div class="alert-score">Score <span>${alert.score}/7</span> · ADX <span style="color:${alert.adx >= 30 ? '#00ff88' : '#666666'}">${fmt(alert.adx, 1)}</span></div>
-      </div>`;
-
-    // Info grid
-    html += `<div class="alert-grid">`;
-
-    if (!inTrade) {
-      html += `
-        <div class="ag-row">
-          <span class="ag-label">Entry Zone</span>
-          <span class="ag-val">${fmtPrice(alert.entry_price)}</span>
-        </div>
-        <div class="ag-row">
-          <span class="ag-label">Margin · Lev</span>
-          <span class="ag-val">${fmt(alert.margin, 0)} USDC · ${alert.leverage}x</span>
-        </div>`;
-    }
-
-    html += `
-      <div class="ag-row">
-        <span class="ag-label">SL</span>
-        <span class="ag-val sl-val">${fmtPrice(alert.sl_price)} <span style="font-size:10px">(${fmt(alert.sl_pct, 2)}%)</span></span>
-      </div>
-      <div class="ag-row">
-        <span class="ag-label">Dollar Risk</span>
-        <span class="ag-val sl-val">$${fmt(alert.dollar_risk, 2)}</span>
-      </div>
-      <div class="ag-row">
-        <span class="ag-label">TP1 (1.5R)</span>
-        <span class="ag-val tp1-val">${fmtPrice(alert.tp1_price)}</span>
-      </div>
-      <div class="ag-row">
-        <span class="ag-label">TP2 (2.0R)</span>
-        <span class="ag-val tp2-val">${fmtPrice(alert.tp2_price)}</span>
-      </div>
-      <div class="ag-row">
-        <span class="ag-label">Trend</span>
-        <span class="ag-val ${isLong ? 'trend-bull' : 'trend-bear'}">${alert.trend}</span>
-      </div>
-      <div class="ag-row">
-        <span class="ag-label">RSI 5m · 1h</span>
-        <span class="ag-val"><span style="color:${rsiColor(alert.rsi_5m)};font-weight:bold">${fmt(alert.rsi_5m ?? 50, 1)}</span><span style="color:var(--muted)"> · </span><span style="color:${rsiColor(alert.rsi_1h)};font-weight:bold">${fmt(alert.rsi_1h ?? 50, 1)}</span></span>
-      </div>
-    </div>`;
-
-    // Footer: timestamp + action pill
-    html += `<div class="alert-footer">`;
-    html += `<span class="alert-time">${relTime(alert.fired_at)}</span>`;
-
-    if (!inTrade) {
-      const autoInfo = (state.auto_pending || {})[key];
-      if (autoInfo) {
-        const remaining = Math.max(0, Math.ceil(autoInfo.fire_at - Date.now() / 1000));
-        const label = remaining > 0 ? `AUTO IN ${remaining}s` : 'OPENING…';
-        html += `<button class="pill pill-open" style="background:#ffaa00;color:#000;cursor:default;min-width:100px" data-auto-key="${key}">${label}</button>`;
-      } else {
-        const disabled = capReached ? 'disabled title="Margin cap reached"' : '';
-        html += `<button class="pill pill-open" ${disabled} onclick="openTrade('${alert.symbol}', '${alert.direction}')">▶ OPEN TRADE</button>`;
-      }
-    } else {
-      html += `<button class="pill pill-close" onclick="closeTrade('${alert.symbol}', '${alert.direction}')">■ CLOSE TRADE</button>`;
-    }
-
-    html += `</div></div>`; // footer + card
+    html += buildConfirmedAlertCard(alert, trade, capReached);
   }
 
   html += '</div>';
