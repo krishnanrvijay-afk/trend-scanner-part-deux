@@ -5,6 +5,17 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+# ── Startup: validate pandas-ta availability ──────────────────────────────────
+try:
+    import pandas_ta as _pta
+    logging.getLogger("scanner").info(
+        "[STARTUP] pandas-ta version %s loaded", getattr(_pta, "__version__", "unknown")
+    )
+except ImportError:
+    logging.getLogger("scanner").critical(
+        "[STARTUP CRITICAL] pandas-ta not available — indicator calculations will fail"
+    )
+
 from config import (
     PAIRS, ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
     DEPTH_GATE_PCT,
