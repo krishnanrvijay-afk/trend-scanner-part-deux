@@ -28,6 +28,7 @@ SESSION_BONUSES = {
 COOLDOWN_MINUTES = 30
 
 # ── Universe scanner ──────────────────────────────────────────────────────────
+UNIVERSE_SCAN_ENABLED = False  # Universe scanner disabled — reintroduce in Phase 2
 PROMOTED_SLOTS = 3
 ROTATION_WINDOW_MINUTES = 120
 UNIVERSE_SCAN_INTERVAL_MINUTES = 5
