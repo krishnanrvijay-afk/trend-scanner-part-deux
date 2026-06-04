@@ -253,7 +253,7 @@ function renderHeader() {
       closestEl.innerHTML =
         `<span style="color:#fff">${cp.symbol}</span>&nbsp;` +
         `<span style="color:${dirColor}">${cp.direction}</span>&nbsp;` +
-        `<span style="color:#ffaa00">${cp.gates_passing}/4</span>${hcFail}`;
+        `<span style="color:#ffaa00">${cp.gates_passing}/7</span>${hcFail}`;
     } else {
       closestEl.textContent = '—';
       closestEl.style.color = '#444';
@@ -294,7 +294,7 @@ function renderScanPulse() {
         `<span style="color:#ffffff">closest:</span> ` +
         `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
         `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
-        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4${failStr})</span>`;
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/7${failStr})</span>`;
     } else {
       cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
     }
@@ -371,18 +371,39 @@ function buildPairRowHtml(p, promotedEntry) {
   }
 
   const gs = p.gates_status || {};
-  const gatesList = [
-    { name: 'TREND', pass: gs.trend_pass },
-    { name: 'ADX',   pass: gs.adx_pass },
-    { name: 'DEPTH', pass: gs.depth_pass },
-    { name: 'J',     pass: gs.j_pass },
-  ];
-  const passingCount = gatesList.filter(g => g.pass).length;
-  const dotsHtml = gatesList.map(g => {
-    const color = g.pass ? '#00ff88' : (passingCount === 3 ? '#ffaa00' : '#444444');
-    return `<span class="gate-dot" style="background:${color}"></span>`;
-  }).join('');
-  const gatesCell = `<div class="gate-dots" title="TREND · ADX · DEPTH · J">${dotsHtml}</div>`;
+
+  // Hard gate colors: amber only on the ONE blocking gate (hardPassing === 3)
+  const hardPassing = [gs.trend_pass, gs.adx_pass, gs.depth_pass, gs.j_pass].filter(Boolean).length;
+  const allHardPass  = hardPassing === 4;
+  const oneHardFail  = hardPassing === 3;
+  function hColor(pass) {
+    return pass ? '#00ff88' : (oneHardFail ? '#ffaa00' : '#444444');
+  }
+  // Soft criteria colors: amber if failing but all hard gates pass (one step away)
+  function sColor(pass) {
+    return pass ? '#00ff88' : (allHardPass ? '#ffaa00' : '#444444');
+  }
+  // RSI dot: green=both P4+P5, amber=one passes, grey=both fail
+  const rsColor = gs.rsi_pass ? '#00ff88' : (gs.rsi_partial ? '#ffaa00' : '#444444');
+
+  const chk = v => v ? '✓' : '✗';
+  const tip = [
+    `TREND ${chk(gs.trend_pass)}`, `ADX ${chk(gs.adx_pass)}`,
+    `DEPTH ${chk(gs.depth_pass)}`, `J ${chk(gs.j_pass)}`,
+    `MA STACK ${chk(gs.ma_pass)}`, `RSI ${chk(gs.rsi_pass)}`,
+    `VOLUME ${chk(gs.vol_pass)}`,
+  ].join(' · ');
+
+  const gatesCell = `<div class="gate-dots" title="${tip}">` +
+    `<span class="gate-dot" style="background:${hColor(gs.trend_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${hColor(gs.adx_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${hColor(gs.depth_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${hColor(gs.j_pass)}"></span>` +
+    `<span class="gate-sep"></span>` +
+    `<span class="gate-dot" style="background:${sColor(gs.ma_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${rsColor}"></span>` +
+    `<span class="gate-dot" style="background:${sColor(gs.vol_pass)}"></span>` +
+    `</div>`;
 
   return `<tr data-symbol="${p.symbol}">
     <td>${symHtml}</td>
