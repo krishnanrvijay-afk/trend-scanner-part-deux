@@ -440,17 +440,37 @@ def score_tc_short(
     score += 1  # P7 free
 
     # Tier log — fires whenever all 4 hard gates pass, regardless of score
+    # Expose every sub-condition value so Railway logs make the evaluation unambiguous.
     vol_ratio = (last_vol / vol_ma10) if vol_ma10 > 0 else 0.0
+    _prev_valid = rsi_5m_prev is not None and not (isinstance(rsi_5m_prev, float) and rsi_5m_prev != rsi_5m_prev)
     if is_capitulation:
-        p4_desc = f"rsi_5m={rsi_5m:.1f} {'rising' if rsi_5m > rsi_5m_prev else 'not rising'}"
-        p6_desc = f"vol={vol_ratio:.2f}x MA10 {'above' if p6 else 'below'} 1.2x threshold"
+        _oversold = rsi_5m < 40
+        _rising   = (rsi_5m > rsi_5m_prev) if _prev_valid else False
+        logger.info(
+            "[TIER] %s SHORT tier=CAPITULATION P4=%d"
+            " rsi_5m=%.2f rsi_5m_prev=%s"
+            " condition=rsi<40_AND_rising"
+            " evaluated=%.2f<40=%s rising=%s"
+            " P6=%d vol=%.2fx MA10 threshold=1.2x",
+            symbol, p4,
+            rsi_5m, f"{rsi_5m_prev:.2f}" if _prev_valid else "NaN",
+            rsi_5m, str(_oversold).upper(), str(_rising).upper(),
+            p6, vol_ratio,
+        )
     else:
-        p4_desc = f"rsi_5m={rsi_5m:.1f} {'falling' if rsi_5m < rsi_5m_prev else 'not falling'}"
-        p6_desc = f"vol={vol_ratio:.2f}x MA10 {'above' if p6 else 'below'} 1.5x threshold"
-    logger.info(
-        "[TIER] %s SHORT tier=%s P4=%d (%s) P6=%d (%s)",
-        symbol, tier, p4, p4_desc, p6, p6_desc,
-    )
+        _overbought = rsi_5m > 60
+        _falling    = (rsi_5m < rsi_5m_prev) if _prev_valid else False
+        logger.info(
+            "[TIER] %s SHORT tier=STANDARD P4=%d"
+            " rsi_5m=%.2f rsi_5m_prev=%s"
+            " condition=rsi>60_AND_falling"
+            " evaluated=%.2f>60=%s falling=%s"
+            " P6=%d vol=%.2fx MA10 threshold=1.5x",
+            symbol, p4,
+            rsi_5m, f"{rsi_5m_prev:.2f}" if _prev_valid else "NaN",
+            rsi_5m, str(_overbought).upper(), str(_falling).upper(),
+            p6, vol_ratio,
+        )
 
     if score < TC_MIN_SCORE:
         reasons = []
