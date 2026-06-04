@@ -433,10 +433,28 @@
       cursor: default;
     }
     .gate-dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       flex-shrink: 0;
+    }
+    .gate-sep {
+      display: inline-block;
+      width: 1px;
+      height: 10px;
+      background: #333333;
+      margin: 0 2px;
+      flex-shrink: 0;
+      vertical-align: middle;
+    }
+    .gates-subheader td {
+      padding: 2px 12px 3px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 9px;
+      color: #444;
+      letter-spacing: .05em;
+      line-height: 1;
     }
 
     /* ── Market snapshot panel ───────────────────────────────── */
@@ -790,6 +808,11 @@
           <th>S%</th>
           <th style="text-align:center">GATES</th>
           <th>Signal</th>
+        </tr>
+        <tr class="gates-subheader">
+          <td colspan="7"></td>
+          <td style="text-align:center">T &middot; A &middot; D &middot; J &nbsp;&nbsp; MA &middot; RS &middot; VL</td>
+          <td></td>
         </tr>
       </thead>
       <tbody id="pair-tbody">
