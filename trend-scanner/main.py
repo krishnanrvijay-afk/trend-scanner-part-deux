@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from config import (
     PAIRS, SCAN_INTERVAL_SECONDS, PRICE_INTERVAL_SECONDS,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
-    UNIVERSE_SCAN_INTERVAL_MINUTES,
+    UNIVERSE_SCAN_INTERVAL_MINUTES, UNIVERSE_SCAN_ENABLED,
 )
 from hl_client import HLClient
 from scanner import (run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
@@ -491,13 +491,15 @@ async def lifespan(app: FastAPI):
 
     scan_task     = asyncio.create_task(scan_loop())
     price_task    = asyncio.create_task(price_loop())
-    universe_task = asyncio.create_task(universe_loop())
+    # Universe scanner disabled — reintroduce in Phase 2
+    universe_task = asyncio.create_task(universe_loop()) if UNIVERSE_SCAN_ENABLED else None
 
     yield
 
     scan_task.cancel()
     price_task.cancel()
-    universe_task.cancel()
+    if universe_task:
+        universe_task.cancel()
     await hl_client.close()
 
 
