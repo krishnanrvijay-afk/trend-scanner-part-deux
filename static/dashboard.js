@@ -2,6 +2,7 @@
 
 let state = null;
 let lastScanCount = -1;
+let prevAlertTradeCount = -1;
 const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -48,6 +49,51 @@ function scoreClass(n) {
 function rsiColor(v) {
   if (v == null || isNaN(v)) return '#ffffff';
   return v <= 35 ? '#00ff88' : v >= 65 ? '#ff4444' : '#ffffff';
+}
+
+// ── Tab management ─────────────────────────────────────────────────────────────
+
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById(`tab-btn-${tabId}`);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  const activeContent = document.getElementById(`tab-${tabId}`);
+  if (activeContent) activeContent.classList.add('active');
+
+  const tlActions = document.getElementById('tradelog-tab-actions');
+  if (tlActions) tlActions.style.display = tabId === 'tradelog' ? 'flex' : 'none';
+
+  try { localStorage.setItem('tsp_active_tab', tabId); } catch(e) {}
+}
+
+function updateAlertBadge() {
+  if (!state) return;
+  const alerts     = state.alerts || [];
+  const openTrades = state.open_trades || {};
+  const total      = alerts.length + Object.keys(openTrades).length;
+
+  const badge = document.getElementById('alert-badge');
+  if (badge) {
+    if (total > 0) {
+      badge.textContent  = `(${total})`;
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  // Flash the tab label when count increases (new alert or new trade)
+  if (prevAlertTradeCount !== -1 && total > prevAlertTradeCount) {
+    const btn = document.getElementById('tab-btn-alerts');
+    if (btn) {
+      btn.classList.remove('tab-flash');
+      void btn.offsetWidth; // force reflow to restart animation
+      btn.classList.add('tab-flash');
+    }
+  }
+  prevAlertTradeCount = total;
 }
 
 function showToast(msg, duration = 4000) {
@@ -214,88 +260,107 @@ function renderScanPulse() {
 // Rows are updated in-place by data-symbol to preserve insertion order.
 // Server returns pairs pre-sorted to match config.py PAIRS order.
 
+function buildPairRowHtml(p, promotedEntry) {
+  const trendClass = p.trend === 'Strong Bull' ? 'trend-bull'
+    : p.trend === 'Strong Bear' ? 'trend-bear' : 'trend-neu';
+  const trendLabel = p.trend === 'Strong Bull' ? '▲ S.Bull'
+    : p.trend === 'Strong Bear' ? '▼ S.Bear' : '— Neutral';
+
+  const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
+  const adx = p.adx  ?? 0;
+  const j5  = p.j5   ?? 50;
+  const bid = p.bid_pct ?? 0;
+  const ask = p.ask_pct ?? 0;
+
+  const adxColor = adx >= 30 ? '#00ff88' : '#666666';
+  const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
+  const bidColor = bid >= 60 ? '#00ff88' : '#ffffff';
+  const askColor = ask >= 60 ? '#ff4444' : '#ffffff';
+
+  const symHtml = promotedEntry
+    ? `<span class="slot-badge">S${promotedEntry.slot_number}</span><span class="sym">${p.symbol}</span>`
+    : `<span class="sym">${p.symbol}</span>`;
+
+  const cdSecs = cooldownEndsAt[p.symbol]
+    ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
+    : 0;
+  let sigCell;
+  if (cdSecs > 0) {
+    const cdM = Math.floor(cdSecs / 60);
+    const cdS = cdSecs % 60;
+    sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m ${cdS < 10 ? '0' : ''}${cdS}s</span>`;
+  } else {
+    const sig = p.signal_state || 'none';
+    if (sig === 'confirmed') {
+      sigCell = '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>';
+    } else if (sig === 'pending') {
+      sigCell = '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>';
+    } else if (promotedEntry) {
+      const secsLeft = Math.max(0, (promotedEntry.rotation_expires_at || 0) - Math.floor(Date.now() / 1000));
+      const h = Math.floor(secsLeft / 3600);
+      const m = Math.floor((secsLeft % 3600) / 60);
+      sigCell = `<span style="color:#555;font-size:10px" title="Rotation expires">↻ ${h}h ${m}m</span>`;
+    } else {
+      sigCell = '';
+    }
+  }
+
+  const gs = p.gates_status || {};
+  const gatesList = [
+    { name: 'TREND', pass: gs.trend_pass },
+    { name: 'ADX',   pass: gs.adx_pass },
+    { name: 'DEPTH', pass: gs.depth_pass },
+    { name: 'J',     pass: gs.j_pass },
+  ];
+  const passingCount = gatesList.filter(g => g.pass).length;
+  const dotsHtml = gatesList.map(g => {
+    const color = g.pass ? '#00ff88' : (passingCount === 3 ? '#ffaa00' : '#444444');
+    return `<span class="gate-dot" style="background:${color}"></span>`;
+  }).join('');
+  const gatesCell = `<div class="gate-dots" title="TREND · ADX · DEPTH · J">${dotsHtml}</div>`;
+
+  return `<tr data-symbol="${p.symbol}">
+    <td>${symHtml}</td>
+    <td class="${trendClass}">${trendLabel}</td>
+    <td class="price-cell">${fmtPrice(livePrice)}</td>
+    <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
+    <td style="color:${j5Color};text-align:right">${j5 > 100 ? '100+' : j5 < 0 ? '0-' : fmt(j5, 1)}</td>
+    <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
+    <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
+    <td style="text-align:center">${gatesCell}</td>
+    <td style="text-align:center">${sigCell}</td>
+  </tr>`;
+}
+
 function renderPairTable() {
   if (!state) return;
   const tbody = document.getElementById('pair-tbody');
   const pairs = state.pair_states || [];
+  const promotedMap = {};
+  for (const pp of (state.promoted_pairs || [])) {
+    promotedMap[pp.symbol] = pp;
+  }
 
   if (pairs.length === 0) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
     return;
   }
 
-  // Clear any placeholder row (no data-symbol) left from the empty state
-  const placeholder = tbody.querySelector('tr:not([data-symbol])');
-  if (placeholder) tbody.innerHTML = '';
+  const fixedPairs = pairs.filter(p => !promotedMap[p.symbol]);
+  const promPairs  = pairs.filter(p =>  promotedMap[p.symbol]);
 
-  for (const p of pairs) {
-    const trendClass = p.trend === 'Strong Bull' ? 'trend-bull'
-      : p.trend === 'Strong Bear' ? 'trend-bear' : 'trend-neu';
-    const trendLabel = p.trend === 'Strong Bull' ? '▲ S.Bull'
-      : p.trend === 'Strong Bear' ? '▼ S.Bear' : '— Neutral';
+  let html = '';
+  for (const p of fixedPairs) html += buildPairRowHtml(p, null);
 
-    const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
-    const adx = p.adx  ?? 0;
-    const j5  = p.j5   ?? 50;
-    const bid = p.bid_pct ?? 0;
-    const ask = p.ask_pct ?? 0;
+  html += `<tr class="promoted-divider"><td colspan="9">— PROMOTED —</td></tr>`;
 
-    const adxColor = adx >= 30 ? '#00ff88' : '#666666';
-    const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
-    const bidColor = bid >= 55 ? '#00ff88' : '#ffffff';
-    const askColor = ask >= 55 ? '#ff4444' : '#ffffff';
-
-    const cdSecs = cooldownEndsAt[p.symbol]
-      ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
-      : 0;
-    let sigCell;
-    if (cdSecs > 0) {
-      const cdM = Math.floor(cdSecs / 60);
-      const cdS = cdSecs % 60;
-      sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m ${cdS < 10 ? '0' : ''}${cdS}s</span>`;
-    } else {
-      const sig = p.signal_state || 'none';
-      sigCell = sig === 'confirmed' ? '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>'
-        : sig === 'pending' ? '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>'
-        : '';
-    }
-
-    // Gate dots
-    const gs = p.gates_status || {};
-    const gatesList = [
-      { name: 'TREND', pass: gs.trend_pass },
-      { name: 'ADX',   pass: gs.adx_pass },
-      { name: 'DEPTH', pass: gs.depth_pass },
-      { name: 'J',     pass: gs.j_pass },
-    ];
-    const passingCount = gatesList.filter(g => g.pass).length;
-    const dotsHtml = gatesList.map(g => {
-      const color = g.pass ? '#00ff88' : (passingCount === 3 ? '#ffaa00' : '#444444');
-      return `<span class="gate-dot" style="background:${color}"></span>`;
-    }).join('');
-    const gatesCell = `<div class="gate-dots" title="TREND · ADX · DEPTH · J">${dotsHtml}</div>`;
-
-    const cellsHtml = `
-      <td class="sym">${p.symbol}</td>
-      <td class="${trendClass}">${trendLabel}</td>
-      <td class="price-cell">${fmtPrice(livePrice)}</td>
-      <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
-      <td style="color:${j5Color};text-align:right">${fmt(j5, 1)}</td>
-      <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
-      <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
-      <td style="text-align:center">${gatesCell}</td>
-      <td style="text-align:center">${sigCell}</td>`;
-
-    let row = tbody.querySelector(`tr[data-symbol="${p.symbol}"]`);
-    if (row) {
-      row.innerHTML = cellsHtml;
-    } else {
-      row = document.createElement('tr');
-      row.dataset.symbol = p.symbol;
-      row.innerHTML = cellsHtml;
-      tbody.appendChild(row);
-    }
+  if (promPairs.length === 0) {
+    html += `<tr><td colspan="9" style="text-align:center;color:#555;font-style:italic;padding:10px 12px;font-size:11px">No promoted pairs — market quiet</td></tr>`;
+  } else {
+    for (const p of promPairs) html += buildPairRowHtml(p, promotedMap[p.symbol]);
   }
+
+  tbody.innerHTML = html;
 }
 
 // ── Market snapshot render ────────────────────────────────────────────────────
@@ -352,6 +417,24 @@ function renderMarketSnapshot() {
       <div class="snap-row"><span class="snap-key">Ask ≥55%</span>${chips(db.ask_dominant, '#ff4444')}</div>
       <div class="snap-row"><span class="snap-key">Bid ≥55%</span>${chips(db.bid_dominant, '#00ff88')}</div>
       <div class="snap-row"><span class="snap-key">Balanced</span>${chips(db.balanced, '#ffffff')}</div>
+    </div>`;
+
+  // Universe section — spans full grid width
+  const us       = state.universe_state || {};
+  const promoted = state.promoted_pairs  || [];
+  const promChips = promoted.length > 0
+    ? promoted.map(pp =>
+        `<span style="color:#ffaa00;font-weight:bold;font-size:10px">S${pp.slot_number}:${pp.symbol}</span>`
+        + `&nbsp;<span style="color:#666;font-size:9px">(${pp.universe_score}/7)</span>`
+      ).join('&nbsp;&nbsp;')
+    : '<span style="color:#444;font-size:10px">—</span>';
+
+  content.innerHTML += `
+    <div class="snapshot-section" style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+      <div class="snap-label">Universe Scanner</div>
+      <div class="snap-row"><span class="snap-key">Last scan</span><span style="color:#ffffff;font-size:10px">${us.last_scan_at ? relTime(us.last_scan_at) : '—'}</span></div>
+      <div class="snap-row"><span class="snap-key">Coverage</span><span style="color:#ffffff;font-size:10px">${us.total_pairs_scanned ?? '—'} pairs scanned · ${us.pairs_surviving_filter ?? '—'} survive filter</span></div>
+      <div class="snap-row" style="flex-wrap:wrap;gap:6px"><span class="snap-key">Promoted</span>${promChips}</div>
     </div>`;
 }
 
@@ -556,6 +639,7 @@ function renderAll() {
   renderMarketSnapshot();
   renderAlerts();
   renderTradeLog();
+  updateAlertBadge();
 }
 
 // ── Trade log render ──────────────────────────────────────────────────────────
@@ -634,6 +718,12 @@ async function poll() {
   await fetchState();
   renderAll();
 }
+
+// Restore last active tab from localStorage
+try {
+  const savedTab = localStorage.getItem('tsp_active_tab');
+  if (savedTab) switchTab(savedTab);
+} catch(e) {}
 
 // Initial load
 poll();
