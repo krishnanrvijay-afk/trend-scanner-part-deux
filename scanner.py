@@ -303,32 +303,65 @@ def compute_gates_status(
     bid_pct: float, ask_pct: float,
     j5: float,
 ) -> dict:
-    """Per-gate pass/fail for the strongest direction. Uses raw (unbounded) j5."""
-    if trend == "Strong Bear":
-        direction = "SHORT"
-    elif trend == "Strong Bull":
-        direction = "LONG"
-    else:
-        return {"gates_direction": "NONE", "trend_pass": False, "adx_pass": False,
-                "depth_pass": False, "j_pass": False, "gates_passing": 0}
+    """Evaluate all four hard gates for BOTH LONG and SHORT.
+    Returns the direction with the most gates passing; ties broken by trend alignment.
 
-    adx_pass = adx_1h >= TC_ADX_MIN
-    if direction == "LONG":
-        depth_pass = bid_pct >= 55.0
-        j_pass = (j5 < 45.0 or j5 > 55.0) if adx_1h >= 50 else (j5 < 20.0)
-    else:
-        depth_pass = ask_pct >= 55.0
-        j_pass = (j5 > 55.0 or j5 < 45.0) if adx_1h >= 50 else (j5 > 80.0)
+    Gate definitions (mirror exactly what score_tc_long/short use):
+      TREND — trend matches direction (Strong Bull→LONG, Strong Bear→SHORT)
+      ADX   — adx_1h >= TC_ADX_MIN
+      DEPTH — bid_pct >= DEPTH_GATE_PCT (LONG) / ask_pct >= DEPTH_GATE_PCT (SHORT)
+      J     — tiered: ADX>=50 relaxed (j<45 or j>55), ADX<50 standard (j<20 LONG, j>80 SHORT)
 
-    gates_passing = 1 + int(adx_pass) + int(depth_pass) + int(j_pass)
-    return {
-        "gates_direction": direction,
-        "trend_pass": True,
-        "adx_pass": adx_pass,
-        "depth_pass": depth_pass,
-        "j_pass": j_pass,
-        "gates_passing": gates_passing,
-    }
+    Also exposes failing_gate (name of the single failing gate) when gates_passing == 3,
+    so the UI can display e.g. "XRP SHORT (3/4 — DEPTH failing)".
+    """
+    best: dict = {"gates_direction": "NONE", "trend_pass": False, "adx_pass": False,
+                  "depth_pass": False, "j_pass": False, "gates_passing": 0,
+                  "failing_gate": None}
+
+    for direction in ("LONG", "SHORT"):
+        trend_pass = (trend == "Strong Bull") if direction == "LONG" else (trend == "Strong Bear")
+        adx_pass   = adx_1h >= TC_ADX_MIN
+        if direction == "LONG":
+            depth_pass = bid_pct >= DEPTH_GATE_PCT
+            j_pass = (j5 < 45.0 or j5 > 55.0) if adx_1h >= 50 else (j5 < 20.0)
+        else:
+            depth_pass = ask_pct >= DEPTH_GATE_PCT
+            j_pass = (j5 > 55.0 or j5 < 45.0) if adx_1h >= 50 else (j5 > 80.0)
+
+        gates_passing = int(trend_pass) + int(adx_pass) + int(depth_pass) + int(j_pass)
+
+        failing_gate: Optional[str] = None
+        if gates_passing == 3:
+            if not trend_pass:  failing_gate = "TREND"
+            elif not adx_pass:  failing_gate = "ADX"
+            elif not depth_pass: failing_gate = "DEPTH"
+            elif not j_pass:    failing_gate = "J"
+
+        candidate = {
+            "gates_direction": direction,
+            "trend_pass":  trend_pass,
+            "adx_pass":    adx_pass,
+            "depth_pass":  depth_pass,
+            "j_pass":      j_pass,
+            "gates_passing": gates_passing,
+            "failing_gate":  failing_gate,
+        }
+
+        # Keep candidate if it beats current best; ties go to trend-aligned direction
+        is_trend_aligned = (
+            (direction == "LONG"  and trend == "Strong Bull") or
+            (direction == "SHORT" and trend == "Strong Bear")
+        )
+        best_aligned = (
+            (best["gates_direction"] == "LONG"  and trend == "Strong Bull") or
+            (best["gates_direction"] == "SHORT" and trend == "Strong Bear")
+        )
+        if (gates_passing > best["gates_passing"] or
+                (gates_passing == best["gates_passing"] and is_trend_aligned and not best_aligned)):
+            best = candidate
+
+    return best
 
 
 # ── Scoring ───────────────────────────────────────────────────────────────────
