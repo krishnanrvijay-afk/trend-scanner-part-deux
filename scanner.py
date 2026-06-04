@@ -302,24 +302,39 @@ def compute_gates_status(
     trend: str, adx_1h: float,
     bid_pct: float, ask_pct: float,
     j5: float,
+    ma10: float = 0.0, ma30: float = 0.0, ma60: float = 0.0,
+    rsi_5m: float = 50.0, rsi_5m_prev: float = 50.0, rsi_1h: float = 50.0,
+    last_vol: float = 0.0, vol_ma10: float = 0.0,
 ) -> dict:
-    """Evaluate all four hard gates for BOTH LONG and SHORT.
-    Returns the direction with the most gates passing; ties broken by trend alignment.
+    """Evaluate all 7 gate/criteria states for BOTH LONG and SHORT.
 
-    Gate definitions (mirror exactly what score_tc_long/short use):
-      TREND — trend matches direction (Strong Bull→LONG, Strong Bear→SHORT)
+    Hard gates (T A D J) — must all pass to fire a signal:
+      TREND — trend matches direction
       ADX   — adx_1h >= TC_ADX_MIN
       DEPTH — bid_pct >= DEPTH_GATE_PCT (LONG) / ask_pct >= DEPTH_GATE_PCT (SHORT)
-      J     — tiered: ADX>=50 relaxed (j<45 or j>55), ADX<50 standard (j<20 LONG, j>80 SHORT)
+      J     — tiered: ADX>=50 relaxed (j<45 or j>55), ADX<50 standard (<20 LONG, >80 SHORT)
 
-    Also exposes failing_gate (name of the single failing gate) when gates_passing == 3,
-    so the UI can display e.g. "XRP SHORT (3/4 — DEPTH failing)".
+    Soft criteria (MA RS VL) — scoring points exposed for the dot display:
+      MA    — MA stack aligned for direction (P3)
+      RSI   — both P4 and P5 pass (rsi_partial = exactly one passes)
+      VOL   — volume spike above tier threshold (P6)
+
+    Returns the direction with the most HARD gates passing; ties broken by trend alignment.
+    gates_passing = hard-gate count (max 4).
+    gates_total   = all 7 (used for closest-pair ranking).
+    failing_gate  = name of the single failing gate when total == 6 (or hard == 3).
     """
-    best: dict = {"gates_direction": "NONE", "trend_pass": False, "adx_pass": False,
-                  "depth_pass": False, "j_pass": False, "gates_passing": 0,
-                  "failing_gate": None}
+    best: dict = {
+        "gates_direction": "NONE",
+        "trend_pass": False, "adx_pass": False, "depth_pass": False, "j_pass": False,
+        "ma_pass": False, "rsi_pass": False, "rsi_partial": False, "vol_pass": False,
+        "gates_passing": 0,   # hard gates (max 4)
+        "gates_total":   0,   # all 7
+        "failing_gate":  None,
+    }
 
     for direction in ("LONG", "SHORT"):
+        # ── Hard gates ─────────────────────────────────────────────────────
         trend_pass = (trend == "Strong Bull") if direction == "LONG" else (trend == "Strong Bear")
         adx_pass   = adx_1h >= TC_ADX_MIN
         if direction == "LONG":
@@ -331,24 +346,62 @@ def compute_gates_status(
 
         gates_passing = int(trend_pass) + int(adx_pass) + int(depth_pass) + int(j_pass)
 
+        # ── Soft criteria (computed independently of score functions) ──────
+        if direction == "LONG":
+            ma_pass    = bool(ma10 and ma30 and ma60 and ma10 > ma30 > ma60)
+            p4         = bool(rsi_5m < 40 and rsi_5m > rsi_5m_prev)
+            p5         = bool(rsi_1h > 50)
+            vol_thresh = 1.5
+        else:
+            ma_pass    = bool(ma10 and ma30 and ma60 and ma10 < ma30 < ma60)
+            is_cap     = adx_1h >= 50 and j5 < 45.0
+            if is_cap:
+                p4 = bool(rsi_5m < 40 and rsi_5m > rsi_5m_prev)
+                vol_thresh = 1.2
+            else:
+                p4 = bool(rsi_5m > 60 and rsi_5m < rsi_5m_prev)
+                vol_thresh = 1.5
+            p5 = bool(rsi_1h < 50)
+
+        rsi_pass    = p4 and p5
+        rsi_partial = (p4 or p5) and not rsi_pass
+        vol_pass    = bool(vol_ma10 > 0 and last_vol > vol_thresh * vol_ma10)
+
+        gates_total = gates_passing + int(ma_pass) + int(rsi_pass) + int(vol_pass)
+
+        # ── Failing gate label ─────────────────────────────────────────────
         failing_gate: Optional[str] = None
-        if gates_passing == 3:
-            if not trend_pass:  failing_gate = "TREND"
-            elif not adx_pass:  failing_gate = "ADX"
-            elif not depth_pass: failing_gate = "DEPTH"
-            elif not j_pass:    failing_gate = "J"
+        all_7 = [
+            ("TREND", trend_pass), ("ADX", adx_pass), ("DEPTH", depth_pass), ("J", j_pass),
+            ("MA", ma_pass), ("RSI", rsi_pass), ("VOL", vol_pass),
+        ]
+        if gates_total == 6:
+            for name, passing in all_7:
+                if not passing:
+                    failing_gate = name
+                    break
+        elif gates_passing == 3:
+            for name, passing in all_7[:4]:   # hard gates only
+                if not passing:
+                    failing_gate = name
+                    break
 
         candidate = {
             "gates_direction": direction,
-            "trend_pass":  trend_pass,
-            "adx_pass":    adx_pass,
-            "depth_pass":  depth_pass,
-            "j_pass":      j_pass,
+            "trend_pass":   trend_pass,
+            "adx_pass":     adx_pass,
+            "depth_pass":   depth_pass,
+            "j_pass":       j_pass,
+            "ma_pass":      ma_pass,
+            "rsi_pass":     rsi_pass,
+            "rsi_partial":  rsi_partial,
+            "vol_pass":     vol_pass,
             "gates_passing": gates_passing,
+            "gates_total":   gates_total,
             "failing_gate":  failing_gate,
         }
 
-        # Keep candidate if it beats current best; ties go to trend-aligned direction
+        # Keep candidate if more hard gates pass; ties → trend-aligned direction
         is_trend_aligned = (
             (direction == "LONG"  and trend == "Strong Bull") or
             (direction == "SHORT" and trend == "Strong Bear")
@@ -674,7 +727,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "ma60": round(ma60, 4),
         "alerts": alerts,
         "signal_state": _get_signal_state(symbol),
-        "gates_status": compute_gates_status(trend, adx_1h, bid_pct, ask_pct, j5),
+        "gates_status": compute_gates_status(
+            trend, adx_1h, bid_pct, ask_pct, j5,
+            ma10=ma10, ma30=ma30, ma60=ma60,
+            rsi_5m=rsi_5m, rsi_5m_prev=rsi_5m_prev, rsi_1h=rsi_1h,
+            last_vol=last_vol, vol_ma10=vol_ma10,
+        ),
         "scanned_at": int(time.time()),
     }
 
