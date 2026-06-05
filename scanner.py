@@ -440,50 +440,54 @@ def compute_gates_status(
 
         gates_passing = int(trend_pass) + int(adx_pass) + int(depth_pass)
 
-        # Soft criteria
+        # Soft criteria — P1 P2 P3 P4 (mirrors score_tc_long/short exactly)
+        is_cap     = adx_1h >= 50
+        vol_thresh = 1.2 if is_cap else 1.5
         if direction == "LONG":
-            ma_pass    = bool(ma10 and ma30 and ma60 and ma10 > ma30 > ma60)
-            is_cap     = adx_1h >= 50
-            p4         = bool(rsi_1h > 60 and rsi_1h < rsi_1h_prev) if is_cap \
-                         else bool(rsi_1h < 40 and rsi_1h > rsi_1h_prev)
-            p5         = bool(rsi_1h > 50)
-            vol_thresh = 1.2 if is_cap else 1.5
+            p1_pass = bool(ma10 and ma30 and ma60 and ma10 > ma30 > ma60)
+            p2_pass = bool(rsi_1h > 60 and rsi_1h < rsi_1h_prev) if is_cap \
+                      else bool(rsi_1h < 40 and rsi_1h > rsi_1h_prev)
+            p3_pass = bool(rsi_1h > 50)
         else:
-            ma_pass    = bool(ma10 and ma30 and ma60 and ma10 < ma30 < ma60)
-            is_cap     = adx_1h >= 50
-            p4         = bool(rsi_1h < 40 and rsi_1h > rsi_1h_prev) if is_cap \
-                         else bool(rsi_1h > 60 and rsi_1h < rsi_1h_prev)
-            p5         = bool(rsi_1h < 50)
-            vol_thresh = 1.2 if is_cap else 1.5
+            p1_pass = bool(ma10 and ma30 and ma60 and ma10 < ma30 < ma60)
+            p2_pass = bool(rsi_1h < 40 and rsi_1h > rsi_1h_prev) if is_cap \
+                      else bool(rsi_1h > 60 and rsi_1h < rsi_1h_prev)
+            p3_pass = bool(rsi_1h < 50)
+        p4_pass = bool(vol_ma10 > 0 and last_vol > vol_thresh * vol_ma10)
 
-        rsi_pass    = p4 and p5
-        rsi_partial = (p4 or p5) and not rsi_pass
-        vol_pass    = bool(vol_ma10 > 0 and last_vol > vol_thresh * vol_ma10)
+        # Backward-compat aliases kept for any existing code still reading them
+        ma_pass     = p1_pass
+        rsi_pass    = p2_pass and p3_pass
+        rsi_partial = (p2_pass or p3_pass) and not rsi_pass
+        vol_pass    = p4_pass
 
-        gates_total = gates_passing + int(ma_pass) + int(rsi_pass) + int(vol_pass)
+        gates_total = gates_passing + int(p1_pass) + int(p2_pass) + int(p3_pass) + int(p4_pass)
 
         failing_gate: Optional[str] = None
-        all_6 = [
+        all_7 = [
             ("TREND", trend_pass), ("ADX", adx_pass), ("DEPTH", depth_pass),
-            ("MA", ma_pass), ("RSI", rsi_pass), ("VOL", vol_pass),
+            ("P1", p1_pass), ("P2", p2_pass), ("P3", p3_pass), ("P4", p4_pass),
         ]
-        if gates_total == 5:
-            for name, passing in all_6:
+        if gates_total == 6:   # one criterion away from perfect 7
+            for name, passing in all_7:
                 if not passing:
                     failing_gate = name
                     break
-        elif gates_passing == 2:
-            for name, passing in all_6[:3]:
+        elif gates_passing == 2:   # one hard gate failing
+            for name, passing in all_7[:3]:
                 if not passing:
                     failing_gate = name
                     break
 
         candidate = {
             "gates_direction": direction,
-            "trend_pass":   trend_pass,  "adx_pass":  adx_pass,
+            "trend_pass":   trend_pass,  "adx_pass":   adx_pass,
             "depth_pass":   depth_pass,
-            "ma_pass":      ma_pass,     "rsi_pass":  rsi_pass,
-            "rsi_partial":  rsi_partial, "vol_pass":  vol_pass,
+            "p1_pass":      p1_pass,     "p2_pass":    p2_pass,
+            "p3_pass":      p3_pass,     "p4_pass":    p4_pass,
+            # backward-compat
+            "ma_pass":      ma_pass,     "rsi_pass":   rsi_pass,
+            "rsi_partial":  rsi_partial, "vol_pass":   vol_pass,
             "gates_passing": gates_passing,
             "gates_total":   gates_total,
             "failing_gate":  failing_gate,
