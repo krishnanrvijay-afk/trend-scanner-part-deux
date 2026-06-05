@@ -178,6 +178,7 @@ class AppState:
                         "symbol":        ps["symbol"],
                         "direction":     gs.get("gates_direction", "NONE"),
                         "gates_passing": tot,
+                        "score":         min(ps.get("signal_score", 0), 4),
                         "failing_gate":  gs.get("failing_gate"),
                     }
 
