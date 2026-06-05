@@ -32,13 +32,11 @@ from pydantic import BaseModel
 from config import (
     PAIRS, SCAN_INTERVAL_SECONDS, PRICE_INTERVAL_SECONDS,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
-    UNIVERSE_SCAN_INTERVAL_MINUTES, UNIVERSE_SCAN_ENABLED,
     CONSECUTIVE_LOSS_STOP, TRAILING_TP_PCT, SL_PCT,
 )
 from hl_client import HLClient
 from scanner import (run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
-                     get_cooldown_remaining, get_promoted_pairs, get_universe_state,
-                     run_universe_scan, get_awaiting_entry, get_pair_signal_info)
+                     get_cooldown_remaining, get_pair_signal_info)
 
 # ── Circuit breaker state (module-level) ──────────────────────────────────────
 consecutive_losses:    int  = 0
@@ -120,65 +118,46 @@ class AppState:
         pair_order = {sym: i for i, sym in enumerate(PAIRS)}
         pair_states_out.sort(key=lambda ps: pair_order.get(ps.get("symbol", ""), 999))
 
-        # ── Signal-column state augmentation (layered priority) ──────────────
+        # ── Signal-column state augmentation ─────────────────────────────────
         for i, ps in enumerate(pair_states_out):
-            sym  = ps.get("symbol", "")
-            gs   = ps.get("gates_status", {})
-            hard = (int(bool(gs.get("trend_pass"))) +
-                    int(bool(gs.get("adx_pass"))) +
-                    int(bool(gs.get("depth_pass"))))
-            l_sc = ps.get("long_score", 0)
-            s_sc = ps.get("short_score", 0)
-            cd   = ps.get("cooldown_remaining_seconds") or 0
-
-            sig  = get_pair_signal_info(sym)
+            sym = ps.get("symbol", "")
+            cd  = ps.get("cooldown_remaining_seconds") or 0
+            sig = get_pair_signal_info(sym)
             kl, ks = f"{sym}LONG", f"{sym}SHORT"
 
-            if circuit_breaker_active:
-                sst = "PAUSED"
-            elif kl in trades_serialised or ks in trades_serialised:
+            if kl in trades_serialised or ks in trades_serialised:
                 sst = "IN_TRADE"
             elif cd > 0:
                 sst = "COOLDOWN"
-            elif sig["signal_state"] == "AWAITING_ENTRY":
-                sst = "AWAITING_ENTRY"
-            elif sig["signal_state"] == "QUALIFYING":
-                sst = "QUALIFYING"
-            elif hard > 0:
-                sst = "GATES"
+            elif sig["signal_state"] == "ALERT":
+                sst = "ALERT"
+            elif sig["signal_state"] == "PENDING":
+                sst = "PENDING"
             else:
                 sst = "SCANNING"
 
-            direction = sig["direction"]
-            score = (l_sc if direction == "LONG" else s_sc) if direction else max(l_sc, s_sc)
-
             pair_states_out[i] = {
                 **ps,
-                "signal_state":      sst,
-                "signal_direction":  direction,
-                "signal_hard_gates": hard,
-                "signal_score":      score,
-                "signal_rsi_5m":     sig["rsi_5m"],
-                "signal_rsi_thresh": sig["rsi_thresh"],
+                "signal_state":     sst,
+                "signal_direction": sig["direction"],
             }
 
         # Closest pair ranking
         closest_pair = None
-        max_total    = -1
+        max_gates    = -1
         max_adx_seen = -1.0
         for ps in pair_states_out:
             gs  = ps.get("gates_status", {})
-            tot = gs.get("gates_total", 0)
+            tot = gs.get("gates_passing", 0)
             adx = ps.get("adx", 0.0)
-            if 0 < tot < 7:
-                if tot > max_total or (tot == max_total and adx > max_adx_seen):
-                    max_total    = tot
+            if 0 < tot < 4:
+                if tot > max_gates or (tot == max_gates and adx > max_adx_seen):
+                    max_gates    = tot
                     max_adx_seen = adx
                     closest_pair = {
                         "symbol":        ps["symbol"],
                         "direction":     gs.get("gates_direction", "NONE"),
                         "gates_passing": tot,
-                        "score":         min(ps.get("signal_score", 0), 4),
                         "failing_gate":  gs.get("failing_gate"),
                     }
 
@@ -221,7 +200,6 @@ class AppState:
             "pair_states":      pair_states_out,
             "alerts":           self.alerts,
             "pending_alerts":   get_pending(),
-            "awaiting_entry":   get_awaiting_entry(),
             "prices":           self.prices,
             "open_trades":      trades_serialised,
             "account": {
@@ -244,8 +222,6 @@ class AppState:
             "trade_log":       self.trade_log,
             "closest_pair":    closest_pair,
             "market_snapshot": market_snapshot,
-            "promoted_pairs":  get_promoted_pairs(),
-            "universe_state":  get_universe_state(),
         }
 
     @property
@@ -628,7 +604,7 @@ async def price_loop():
     while True:
         try:
             prices = await hl_client.get_all_prices()
-            active_syms = set(PAIRS) | {pp["symbol"] for pp in get_promoted_pairs()}
+            active_syms = set(PAIRS)
             for sym in active_syms:
                 if sym in prices:
                     app_state.prices[sym] = prices[sym]
@@ -651,17 +627,6 @@ async def price_loop():
         await asyncio.sleep(PRICE_INTERVAL_SECONDS)
 
 
-async def universe_loop():
-    global app_state, hl_client
-    while True:
-        try:
-            open_syms = {t["symbol"] for t in app_state.open_trades.values()}
-            await run_universe_scan(hl_client, open_syms)
-        except Exception as e:
-            print(f"[universe_loop] Error: {e}")
-        await asyncio.sleep(UNIVERSE_SCAN_INTERVAL_MINUTES * 60)
-
-
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -670,21 +635,17 @@ async def lifespan(app: FastAPI):
     hl_client = HLClient()
     print("[startup] HLClient initialized")
     print(
-        "[startup] TIMEFRAME=1h_signal/5m_entry | SL=3.0%_FIXED | ADX_MIN=25 | COOLDOWN=60min "
-        "| CIRCUIT_BREAKER=5_losses | TRAILING_TP=0.15% "
-        "| LEVERAGE=10x(7/7+ADX60)/8x(6/7+ADX50)/6x(default) | PAPER=True"
+        "[CONFIG] ADX=30 DEPTH=60% SL=3% TP1=4.5% TP2=6% COOLDOWN=60min "
+        "CIRCUIT=5 LEVERAGE=10/8/6x PAPER=True CONDITIONS=4 NO_SCORING"
     )
 
-    scan_task     = asyncio.create_task(scan_loop())
-    price_task    = asyncio.create_task(price_loop())
-    universe_task = asyncio.create_task(universe_loop()) if UNIVERSE_SCAN_ENABLED else None
+    scan_task  = asyncio.create_task(scan_loop())
+    price_task = asyncio.create_task(price_loop())
 
     yield
 
     scan_task.cancel()
     price_task.cancel()
-    if universe_task:
-        universe_task.cancel()
     await hl_client.close()
 
 
