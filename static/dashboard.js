@@ -265,7 +265,7 @@ function renderHeader() {
       closestEl.innerHTML =
         `<span style="color:#fff">${cp.symbol}</span>&nbsp;` +
         `<span style="color:${dirColor}">${cp.direction}</span>&nbsp;` +
-        `<span style="color:#ffaa00">${cp.gates_passing}/4</span>${hcFail}`;
+        `<span style="color:#ffaa00">${cp.score ?? 0}/4</span>${hcFail}`;
     } else {
       closestEl.textContent = '—';
       closestEl.style.color = '#444';
@@ -328,7 +328,7 @@ function renderScanPulse() {
         `<span style="color:#ffffff">closest:</span> ` +
         `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
         `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
-        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4${failStr})</span>`;
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.score ?? 0}/4${failStr})</span>`;
     } else {
       cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
     }
