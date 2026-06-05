@@ -537,6 +537,8 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
 async def scan_loop():
     global app_state, hl_client
     while True:
+        scan_start_time = time.time()
+        sleep_for = float(SCAN_INTERVAL_SECONDS)   # fallback if exception before calc
         try:
             pair_states, new_alerts = await run_full_scan(hl_client)
             app_state.pair_states = pair_states
@@ -608,11 +610,16 @@ async def scan_loop():
             app_state.alerts = app_state.alerts[-50:]
             app_state.last_scan_at = int(time.time())
             app_state.scan_count  += 1
+            elapsed   = time.time() - scan_start_time
+            sleep_for = max(0.0, SCAN_INTERVAL_SECONDS - elapsed)
             print(f"[scan] #{app_state.scan_count} complete — {len(new_alerts)} new alerts")
+            print(f"[SCAN TIMING] scan=#{app_state.scan_count} duration={elapsed:.1f}s next_in={sleep_for:.1f}s interval={SCAN_INTERVAL_SECONDS}s")
         except Exception as e:
+            elapsed   = time.time() - scan_start_time
+            sleep_for = max(0.0, SCAN_INTERVAL_SECONDS - elapsed)
             print(f"[scan_loop] Error: {e}")
 
-        await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+        await asyncio.sleep(sleep_for)
 
 
 async def price_loop():
