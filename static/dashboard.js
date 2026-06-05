@@ -265,7 +265,7 @@ function renderHeader() {
       closestEl.innerHTML =
         `<span style="color:#fff">${cp.symbol}</span>&nbsp;` +
         `<span style="color:${dirColor}">${cp.direction}</span>&nbsp;` +
-        `<span style="color:#ffaa00">${cp.score ?? 0}/4</span>${hcFail}`;
+        `<span style="color:#ffaa00">${cp.gates_passing}/4</span>${hcFail}`;
     } else {
       closestEl.textContent = '—';
       closestEl.style.color = '#444';
@@ -328,7 +328,7 @@ function renderScanPulse() {
         `<span style="color:#ffffff">closest:</span> ` +
         `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
         `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
-        `<span style="color:#ffaa00;font-weight:bold">(${cp.score ?? 0}/4${failStr})</span>`;
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4${failStr})</span>`;
     } else {
       cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
     }
@@ -375,13 +375,8 @@ function buildPairRowHtml(p, promotedEntry) {
     ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
     : (p.cooldown_remaining_seconds || 0);
 
-  // Signal column — every pair always shows a state, no empty cells
-  const sigState  = p.signal_state      || 'SCANNING';
-  const sigHard   = p.signal_hard_gates ?? 0;
-  const sigScore  = p.signal_score      ?? 0;
-  const sigDir    = p.signal_direction  || '';
-  const sigRsi5m  = p.signal_rsi_5m;
-  const sigThresh = p.signal_rsi_thresh;
+  // Signal column — 5 states: SCANNING (dash) / PENDING / ALERT / IN_TRADE / COOLDOWN
+  const sigState = p.signal_state || 'SCANNING';
 
   let sigCell;
   switch (sigState) {
@@ -397,37 +392,24 @@ function buildPairRowHtml(p, promotedEntry) {
       sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m${cdS < 10 ? '0' : ''}${cdS}s</span>`;
       break;
     }
-    case 'PAUSED':
-      sigCell = `<span style="color:#ff4444;font-size:10px;font-weight:700">⛔ PAUSED</span>`;
+    case 'ALERT':
+      sigCell = `<span class="sig-pulse" style="color:#00ff88;font-size:10px;font-weight:700;letter-spacing:.04em">🔔 CONFIRMED</span>`;
       break;
-    case 'AWAITING_ENTRY': {
-      const rsiLbl = sigRsi5m != null ? `RSI ${sigRsi5m}` : 'RSI —';
-      const thrLbl = sigThresh != null ? ` ${sigDir === 'LONG' ? '>' : '<'}${sigThresh}` : '';
-      sigCell = `<span class="sig-pulse" style="color:#f97316;font-size:10px;font-weight:700;letter-spacing:.04em" title="Awaiting 5m pullback — ${sigDir}">◈ AWAIT ENTRY<br><span style="font-weight:400;font-size:9px">${rsiLbl}${thrLbl}</span></span>`;
-      break;
-    }
-    case 'QUALIFYING':
-      sigCell = `<span class="sig-pulse" style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.04em" title="Scan 1 confirmed — awaiting scan 2">① QUALIFYING ${sigScore}/4</span>`;
-      break;
-    case 'GATES':
-      sigCell = `<span style="color:#ffaa00;font-size:10px;font-weight:600" title="${sigHard}/3 hard gates passing">${sigHard}/3 GATES</span>`;
+    case 'PENDING':
+      sigCell = `<span style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.04em">⏳ PENDING</span>`;
       break;
     default: // SCANNING
-      sigCell = `<span style="color:#444444;font-size:10px">SCANNING</span>`;
+      sigCell = `<span style="color:#444444;font-size:11px">—</span>`;
   }
 
   const gs = p.gates_status || {};
 
-  // Hard gate colors: amber only on the ONE blocking gate (exactly 2 of 3 passing)
-  const hardPassing = [gs.trend_pass, gs.adx_pass, gs.depth_pass].filter(Boolean).length;
-  const allHardPass  = hardPassing === 3;
-  const oneHardFail  = hardPassing === 2;
-  function hColor(pass) {
-    return pass ? '#00ff88' : (oneHardFail ? '#ffaa00' : '#444444');
-  }
-  // Soft P1-P4 colors: amber if all hard gates pass but this criterion is failing
-  function sColor(pass) {
-    return pass ? '#00ff88' : (allHardPass ? '#ffaa00' : '#444444');
+  // 4-dot gate display: T · A · D · MA
+  // Amber on the single failing dot when exactly 3 of 4 pass
+  const passCount = [gs.trend_pass, gs.adx_pass, gs.depth_pass, gs.ma_pass].filter(Boolean).length;
+  const nearMiss  = passCount === 3;
+  function gColor(pass) {
+    return pass ? '#00ff88' : (nearMiss ? '#ffaa00' : '#444444');
   }
 
   const chk = v => v ? '✓' : '✗';
@@ -435,21 +417,14 @@ function buildPairRowHtml(p, promotedEntry) {
     `TREND ${chk(gs.trend_pass)}`,
     `ADX ${chk(gs.adx_pass)}`,
     `DEPTH ${chk(gs.depth_pass)}`,
-    `MA STACK ${chk(gs.p1_pass)}`,
-    `RSI MOMENTUM ${chk(gs.p2_pass)}`,
-    `RSI LEVEL ${chk(gs.p3_pass)}`,
-    `VOLUME ${chk(gs.p4_pass)}`,
+    `MA STACK ${chk(gs.ma_pass)}`,
   ].join(' · ');
 
   const gatesCell = `<div class="gate-dots" title="${tip}">` +
-    `<span class="gate-dot" style="background:${hColor(gs.trend_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${hColor(gs.adx_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${hColor(gs.depth_pass)}"></span>` +
-    `<span class="gate-sep"></span>` +
-    `<span class="gate-dot" style="background:${sColor(gs.p1_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${sColor(gs.p2_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${sColor(gs.p3_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${sColor(gs.p4_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${gColor(gs.trend_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${gColor(gs.adx_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${gColor(gs.depth_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${gColor(gs.ma_pass)}"></span>` +
     `</div>`;
 
   return `<tr data-symbol="${p.symbol}">
@@ -469,30 +444,14 @@ function renderPairTable() {
   if (!state) return;
   const tbody = document.getElementById('pair-tbody');
   const pairs = state.pair_states || [];
-  const promotedMap = {};
-  for (const pp of (state.promoted_pairs || [])) {
-    promotedMap[pp.symbol] = pp;
-  }
 
   if (pairs.length === 0) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
     return;
   }
 
-  const fixedPairs = pairs.filter(p => !promotedMap[p.symbol]);
-  const promPairs  = pairs.filter(p =>  promotedMap[p.symbol]);
-
   let html = '';
-  for (const p of fixedPairs) html += buildPairRowHtml(p, null);
-
-  html += `<tr class="promoted-divider"><td colspan="9">— PROMOTED —</td></tr>`;
-
-  if (promPairs.length === 0) {
-    html += `<tr><td colspan="9" style="text-align:center;color:#555;font-style:italic;padding:10px 12px;font-size:11px">No promoted pairs — market quiet</td></tr>`;
-  } else {
-    for (const p of promPairs) html += buildPairRowHtml(p, promotedMap[p.symbol]);
-  }
-
+  for (const p of pairs) html += buildPairRowHtml(p, null);
   tbody.innerHTML = html;
 }
 
@@ -551,24 +510,6 @@ function renderMarketSnapshot() {
       <div class="snap-row"><span class="snap-key">Bid ≥55%</span>${chips(db.bid_dominant, '#00ff88')}</div>
       <div class="snap-row"><span class="snap-key">Balanced</span>${chips(db.balanced, '#ffffff')}</div>
     </div>`;
-
-  // Universe section — spans full grid width
-  const us       = state.universe_state || {};
-  const promoted = state.promoted_pairs  || [];
-  const promChips = promoted.length > 0
-    ? promoted.map(pp =>
-        `<span style="color:#ffaa00;font-weight:bold;font-size:10px">S${pp.slot_number}:${pp.symbol}</span>`
-        + `&nbsp;<span style="color:#666;font-size:9px">(${pp.universe_score}/7)</span>`
-      ).join('&nbsp;&nbsp;')
-    : '<span style="color:#444;font-size:10px">—</span>';
-
-  content.innerHTML += `
-    <div class="snapshot-section" style="grid-column:1/-1;border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
-      <div class="snap-label">Universe Scanner</div>
-      <div class="snap-row"><span class="snap-key">Last scan</span><span style="color:#ffffff;font-size:10px">${us.last_scan_at ? relTime(us.last_scan_at) : '—'}</span></div>
-      <div class="snap-row"><span class="snap-key">Coverage</span><span style="color:#ffffff;font-size:10px">${us.total_pairs_scanned ?? '—'} pairs scanned · ${us.pairs_surviving_filter ?? '—'} survive filter</span></div>
-      <div class="snap-row" style="flex-wrap:wrap;gap:6px"><span class="snap-key">Promoted</span>${promChips}</div>
-    </div>`;
 }
 
 // ── Alert card builder ────────────────────────────────────────────────────────
@@ -581,11 +522,6 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
   const dirBadge = isLong
     ? `<span class="ac-dir-long">LONG</span>`
     : `<span class="ac-dir-short">SHORT</span>`;
-
-  const score    = alert.score ?? 0;
-  const scoreMax = 4;
-  const scoreColor = score >= scoreMax ? '#00ff88' : '#ffaa00';
-  const scoreChip  = `<span class="ac-score" style="background:${scoreColor}22;color:${scoreColor};border:1px solid ${scoreColor}44">${score}/${scoreMax}</span>`;
 
   const adxColor   = (alert.adx || 0) >= 30 ? '#00ff88' : '#666666';
   const trendColor = isLong ? '#00ff88' : '#ff4444';
@@ -633,7 +569,6 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
         <div class="ac-sig">
           <span class="ac-sym">${alert.symbol}</span>
           ${dirBadge}
-          ${scoreChip}
         </div>
         <div class="ac-right">
           <span style="color:${adxColor};font-weight:700">ADX ${fmt(alert.adx, 1)}</span>
@@ -689,10 +624,13 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
       <div class="ac-detail-grid">
         <div class="ac-detail-row"><span class="ac-detail-label">MARGIN</span><span class="ac-detail-val" style="color:#ffffff">$${fmt(alert.margin, 0)}</span></div>
         <div class="ac-detail-row"><span class="ac-detail-label">ADX</span><span class="ac-detail-val" style="color:${adxColor}">${fmt(alert.adx, 1)}</span></div>
-        <div class="ac-detail-row"><span class="ac-detail-label">LEVERAGE</span><span class="ac-detail-val" style="color:#ffffff">${alert.leverage ?? alert.leverage ?? 6}x</span></div>
-        <div class="ac-detail-row"><span class="ac-detail-label">RSI 1H PREV</span><span class="ac-detail-val" style="color:${rsiColor(alert.rsi_1h_prev)}">${fmt(alert.rsi_1h_prev ?? 50, 1)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">LEVERAGE</span><span class="ac-detail-val" style="color:#ffffff">${alert.leverage ?? 6}x</span></div>
         <div class="ac-detail-row"><span class="ac-detail-label">DOLLAR RISK</span><span class="ac-detail-val" style="color:#ffaa00">$${fmt(alert.dollar_risk, 2)}</span></div>
-        <div class="ac-detail-row"><span class="ac-detail-label">RSI 1H</span><span class="ac-detail-val" style="color:${rsiColor(alert.rsi_1h)}">${fmt(alert.rsi_1h ?? 50, 1)}</span></div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:6px;font-size:10px;color:#555555">
+        <span>RSI 1H <span style="color:#888888">${fmt(alert.rsi_1h ?? 50, 1)}</span></span>
+        <span>J 1H <span style="color:#888888">${fmt(alert.j1h ?? 50, 1)}</span></span>
+        <span>VOL <span style="color:#888888">${fmt(alert.volume_ratio ?? 0, 2)}x</span></span>
       </div>
     </div>`;
 
@@ -820,18 +758,14 @@ function renderAlerts() {
   const allAlerts  = (state.alerts || []).slice().reverse(); // newest first
   const pendings   = (state.pending_alerts || []).slice().reverse();
 
-  // Separate awaiting-entry alerts from confirmed/triggered ones
-  const awaitingAlerts   = allAlerts.filter(a => a.status === 'awaiting_entry');
-  const confirmedAlerts  = allAlerts.filter(a => a.status !== 'awaiting_entry');
-
-  // Filter out pendings that already have a confirmed/awaiting alert
-  const confirmedKeys = new Set(allAlerts.map(a => `${a.symbol}${a.direction}`));
+  // Filter out pendings that already have a confirmed alert
+  const confirmedKeys   = new Set(allAlerts.map(a => `${a.symbol}${a.direction}`));
   const visiblePendings = pendings.filter(p => !confirmedKeys.has(`${p.symbol}${p.direction}`));
 
   if (allAlerts.length === 0 && visiblePendings.length === 0) {
     container.innerHTML = `
       <div class="alerts-empty">
-        Scanning every 20s.<br>Alerts appear here when<br>TC conditions are met twice.
+        Scanning every 20s.<br>Alerts appear here when<br>all 4 conditions pass twice.
       </div>`;
     return;
   }
@@ -841,11 +775,6 @@ function renderAlerts() {
   const openTrades = state.open_trades || {};
 
   let html = '<div class="alerts-list">';
-
-  // ── Awaiting entry cards (orange) ────────────────────────────────────────
-  for (const ae of awaitingAlerts) {
-    html += buildAwaitingEntryCard(ae);
-  }
 
   // ── Pending cards (amber, no OPEN pill) ──────────────────────────────────
   for (const p of visiblePendings) {
@@ -859,14 +788,14 @@ function renderAlerts() {
             background:rgba(255,170,0,0.12);border:1px solid rgba(255,170,0,0.4);
             color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.06em;
             animation:pending-pulse 1.4s infinite
-          ">● PENDING RECONFIRMATION</span>
+          ">⏳ PENDING RECONFIRMATION</span>
         </div>
         <div class="alert-header-row">
           <div class="alert-sig">
             <span class="alert-sym">${p.symbol}</span>
             <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${p.direction}</span>
           </div>
-          <div class="alert-score">Score <span>${p.score}/4</span> · ADX <span style="color:${p.adx >= 25 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
+          <div class="alert-score">ADX <span style="color:${p.adx >= 30 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
         </div>
         <div class="alert-grid">
           <div class="ag-row">
@@ -888,24 +817,11 @@ function renderAlerts() {
       </div>`;
   }
 
-  // ── Confirmed / triggered alert cards ────────────────────────────────────
-  for (const alert of confirmedAlerts) {
+  // ── Confirmed alert cards ─────────────────────────────────────────────────
+  for (const alert of allAlerts) {
     const key   = `${alert.symbol}${alert.direction}`;
     const trade = openTrades[key];
-
-    // Show ENTRY TRIGGERED banner if this is a just-fired entry
-    let entryBanner = '';
-    if (alert.status === 'entry_triggered') {
-      const entType  = alert.entry_type === 'PULLBACK' ? 'PULLBACK CONFIRMED' : 'TIMEOUT';
-      const entColor = alert.entry_type === 'PULLBACK' ? '#00ff88' : '#f97316';
-      entryBanner = `
-        <div style="padding:5px 10px;border-radius:4px;background:rgba(0,0,0,0.4);border:1px solid ${entColor}33;
-          color:${entColor};font-size:10px;font-weight:700;letter-spacing:.06em;margin-bottom:8px">
-          ⚡ ENTRY TRIGGERED — ${entType}
-        </div>`;
-    }
-
-    html += buildConfirmedAlertCard(alert, trade, capReached, entryBanner);
+    html += buildConfirmedAlertCard(alert, trade, capReached);
   }
 
   html += '</div>';
