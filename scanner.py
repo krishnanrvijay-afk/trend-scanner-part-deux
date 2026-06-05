@@ -69,6 +69,11 @@ logger.info(
     CONSECUTIVE_LOSS_STOP, TRAILING_TP_PCT * 100,
     LEVERAGE_TIER_HIGH, LEVERAGE_TIER_MID, LEVERAGE_TIER_LOW, PAPER_MODE,
 )
+logger.info(
+    "[CONFIG] TC_ADX_MIN=%d confirmed | TC_MIN_SCORE=%d | DEPTH_GATE_PCT=%d"
+    " | depth_score_threshold_fixed=DEPTH_GATE_PCT (was hardcoded 55)",
+    TC_ADX_MIN, TC_MIN_SCORE, DEPTH_GATE_PCT,
+)
 
 
 # ── Cooldown helpers ──────────────────────────────────────────────────────────
@@ -521,7 +526,7 @@ def score_tc_long(
 
     if trend != "Strong Bull": return 0
     if adx_1h < TC_ADX_MIN:   return 0
-    if bid_pct < 55.0:         return 0
+    if bid_pct < DEPTH_GATE_PCT: return 0
 
     is_cap = adx_1h >= 50
 
@@ -575,7 +580,7 @@ def score_tc_short(
 
     if trend != "Strong Bear": return 0
     if adx_1h < TC_ADX_MIN:   return 0
-    if ask_pct < 55.0:         return 0
+    if ask_pct < DEPTH_GATE_PCT: return 0
 
     is_cap = adx_1h >= 50
     tier = "CAPITULATION" if is_cap else "STANDARD"
@@ -756,6 +761,13 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         key = f"{symbol}{direction}"
         if score >= TC_MIN_SCORE:
             prev = _prev_scores.get(key, 0)
+            _t_log = (trend == "Strong Bull") if direction == "LONG" else (trend == "Strong Bear")
+            _a_log = adx_1h >= TC_ADX_MIN
+            _d_log = (bid_pct if direction == "LONG" else ask_pct) >= DEPTH_GATE_PCT
+            _h_log = int(_t_log) + int(_a_log) + int(_d_log)
+            _c_log = 2 if (prev >= TC_MIN_SCORE and not _in_cooldown(key)) else 1
+            logger.info("[CONSECUTIVE] %s %s count=%d score=%d/4 gates=%d/3 prev_score=%d",
+                        symbol, direction, _c_log, score, _h_log, prev)
             if prev >= TC_MIN_SCORE and not _in_cooldown(key):
                 # Signal confirmed — move to Phase-2 AWAITING_ENTRY
                 if key not in _awaiting_entry and key not in _entry_tasks:
@@ -803,6 +815,24 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         else:
             _prev_scores[key] = 0
             _pending.pop(key, None)
+
+    # ZEC verbose debug — logs every scan regardless of score
+    if symbol == "ZEC":
+        _zec_t  = int(trend == "Strong Bear")
+        _zec_a  = int(adx_1h >= TC_ADX_MIN)
+        _zec_d  = int(ask_pct >= DEPTH_GATE_PCT)
+        _zec_h  = _zec_t + _zec_a + _zec_d
+        _zec_ps = _prev_scores.get("ZECSHORT", 0)
+        _zec_pl = _prev_scores.get("ZECLONG", 0)
+        _zec_sig = get_pair_signal_info("ZEC")["signal_state"]
+        logger.info(
+            "[ZEC DEBUG] gates=%d/3(T%d·A%d·D%d) score_long=%d score_short=%d/4"
+            " prev_long=%d prev_short=%d signal_state=%s"
+            " | adx=%.1f ask_pct=%.1f trend=%s",
+            _zec_h, _zec_t, _zec_a, _zec_d,
+            long_score, short_score, _zec_pl, _zec_ps, _zec_sig,
+            adx_1h, ask_pct, trend,
+        )
 
     j1h_clamped = round(max(0.0, min(100.0, j1h)), 1)
     return {
