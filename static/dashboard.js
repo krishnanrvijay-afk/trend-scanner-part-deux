@@ -373,37 +373,47 @@ function buildPairRowHtml(p, promotedEntry) {
 
   const cdSecs = cooldownEndsAt[p.symbol]
     ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
-    : 0;
+    : (p.cooldown_remaining_seconds || 0);
 
-  // IN TRADE overrides everything else in the signal column
-  const openTradesMap = state.open_trades || {};
-  const hasLongTrade  = !!openTradesMap[`${p.symbol}LONG`];
-  const hasShortTrade = !!openTradesMap[`${p.symbol}SHORT`];
+  // Signal column — every pair always shows a state, no empty cells
+  const sigState  = p.signal_state      || 'SCANNING';
+  const sigHard   = p.signal_hard_gates ?? 0;
+  const sigScore  = p.signal_score      ?? 0;
+  const sigDir    = p.signal_direction  || '';
+  const sigRsi5m  = p.signal_rsi_5m;
+  const sigThresh = p.signal_rsi_thresh;
 
   let sigCell;
-  if (hasLongTrade || hasShortTrade) {
-    const tradeColor = hasLongTrade ? '#00ff88' : '#ff4444';
-    sigCell = `<span style="color:${tradeColor};font-size:10px;font-weight:700;letter-spacing:.06em">▶ IN TRADE</span>`;
-  } else if (cdSecs > 0) {
-    const cdM = Math.floor(cdSecs / 60);
-    const cdS = cdSecs % 60;
-    sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m ${cdS < 10 ? '0' : ''}${cdS}s</span>`;
-  } else {
-    const sig = p.signal_state || 'none';
-    if (sig === 'awaiting_entry') {
-      sigCell = '<span style="color:#f97316;font-size:10px;font-weight:700;letter-spacing:.05em" title="Awaiting 5m pullback">◈ AWAIT ENTRY</span>';
-    } else if (sig === 'confirmed') {
-      sigCell = '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>';
-    } else if (sig === 'pending') {
-      sigCell = '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>';
-    } else if (promotedEntry) {
-      const secsLeft = Math.max(0, (promotedEntry.rotation_expires_at || 0) - Math.floor(Date.now() / 1000));
-      const h = Math.floor(secsLeft / 3600);
-      const m = Math.floor((secsLeft % 3600) / 60);
-      sigCell = `<span style="color:#555;font-size:10px" title="Rotation expires">↻ ${h}h ${m}m</span>`;
-    } else {
-      sigCell = '';
+  switch (sigState) {
+    case 'IN_TRADE': {
+      const tlDir   = (state.open_trades || {})[`${p.symbol}LONG`] ? 'LONG' : 'SHORT';
+      const tlColor = tlDir === 'LONG' ? '#00ff88' : '#ff4444';
+      sigCell = `<span style="color:${tlColor};font-size:10px;font-weight:700;letter-spacing:.06em">▶ IN TRADE</span>`;
+      break;
     }
+    case 'COOLDOWN': {
+      const cdM = Math.floor(cdSecs / 60);
+      const cdS = cdSecs % 60;
+      sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m${cdS < 10 ? '0' : ''}${cdS}s</span>`;
+      break;
+    }
+    case 'PAUSED':
+      sigCell = `<span style="color:#ff4444;font-size:10px;font-weight:700">⛔ PAUSED</span>`;
+      break;
+    case 'AWAITING_ENTRY': {
+      const rsiLbl = sigRsi5m != null ? `RSI ${sigRsi5m}` : 'RSI —';
+      const thrLbl = sigThresh != null ? ` ${sigDir === 'LONG' ? '>' : '<'}${sigThresh}` : '';
+      sigCell = `<span class="sig-pulse" style="color:#f97316;font-size:10px;font-weight:700;letter-spacing:.04em" title="Awaiting 5m pullback — ${sigDir}">◈ AWAIT ENTRY<br><span style="font-weight:400;font-size:9px">${rsiLbl}${thrLbl}</span></span>`;
+      break;
+    }
+    case 'QUALIFYING':
+      sigCell = `<span class="sig-pulse" style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.04em" title="Scan 1 confirmed — awaiting scan 2 · score ${sigScore}/4">① QUALIFYING</span>`;
+      break;
+    case 'GATES':
+      sigCell = `<span style="color:#ffaa00;font-size:10px;font-weight:600" title="${sigHard}/3 hard gates passing">${sigHard}/3 GATES</span>`;
+      break;
+    default: // SCANNING
+      sigCell = `<span style="color:#444444;font-size:10px">SCANNING</span>`;
   }
 
   const gs = p.gates_status || {};
