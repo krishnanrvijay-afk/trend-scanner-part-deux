@@ -129,6 +129,18 @@ async function openTrade(symbol, direction) {
   }
 }
 
+async function resetCircuitBreaker() {
+  try {
+    const res = await fetch('/api/circuit-breaker/reset', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.detail || 'Reset failed'); return; }
+    await fetchState();
+    renderAll();
+  } catch (e) {
+    showToast('Network error: ' + e.message);
+  }
+}
+
 async function closeTrade(symbol, direction) {
   try {
     const res = await fetch('/api/trade/close', {
@@ -262,6 +274,28 @@ function renderHeader() {
 
   const sigEl = document.getElementById('hc-signals');
   if (sigEl) sigEl.textContent = (state.alerts || []).length;
+
+  // ── Circuit breaker display ───────────────────────────────────
+  const cb = state.circuit_breaker || {};
+  const cbActive = cb.active || false;
+  const cbLosses = cb.consecutive_losses || 0;
+
+  const cbBadgeEl = document.getElementById('circuit-breaker-badge');
+  if (cbBadgeEl) cbBadgeEl.style.display = cbActive ? 'inline-flex' : 'none';
+
+  const cbResetEl = document.getElementById('circuit-breaker-reset');
+  if (cbResetEl) cbResetEl.style.display = cbActive ? 'inline-flex' : 'none';
+
+  const lossesEl = document.getElementById('hc-losses-in-row');
+  if (lossesEl) {
+    if (cbLosses >= 3) {
+      const lossColor = cbLosses >= 5 ? '#ff4444' : '#ffaa00';
+      lossesEl.innerHTML = `LOSSES IN ROW: <span style="color:${lossColor};font-weight:700">${cbLosses}</span>`;
+      lossesEl.style.display = 'inline-flex';
+    } else {
+      lossesEl.style.display = 'none';
+    }
+  }
 }
 
 // ── Scan pulse strip render ───────────────────────────────────────────────────
@@ -356,7 +390,9 @@ function buildPairRowHtml(p, promotedEntry) {
     sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m ${cdS < 10 ? '0' : ''}${cdS}s</span>`;
   } else {
     const sig = p.signal_state || 'none';
-    if (sig === 'confirmed') {
+    if (sig === 'awaiting_entry') {
+      sigCell = '<span style="color:#f97316;font-size:10px;font-weight:700;letter-spacing:.05em" title="Awaiting 5m pullback">◈ AWAIT ENTRY</span>';
+    } else if (sig === 'confirmed') {
       sigCell = '<span style="color:#00ff88;font-size:15px" title="Confirmed">🔔</span>';
     } else if (sig === 'pending') {
       sigCell = '<span style="color:#ffaa00;font-size:15px" title="Pending">⏳</span>';
@@ -526,7 +562,7 @@ function renderMarketSnapshot() {
 
 // ── Alert card builder ────────────────────────────────────────────────────────
 
-function buildConfirmedAlertCard(alert, trade, capReached) {
+function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
   const key    = `${alert.symbol}${alert.direction}`;
   const inTrade = !!trade;
   const isLong  = alert.direction === 'LONG';
@@ -550,8 +586,11 @@ function buildConfirmedAlertCard(alert, trade, capReached) {
   const tp2Dollar = dr > 0 ? `+$${fmt(dr * 2.0, 2)}` : '—';
 
   const tp1Hit   = !!(trade && trade.tp1_hit);
+  const trailSL  = trade && trade.trailing_sl;
   const slDisplay = tp1Hit
-    ? `<span style="color:#555;text-decoration:line-through;margin-right:6px">${fmtPrice(alert.sl_price)}</span><span style="color:#00ff88;font-weight:700">BREAKEVEN</span>`
+    ? (trailSL
+        ? `<span style="color:#555;text-decoration:line-through;margin-right:4px">${fmtPrice(alert.sl_price)}</span><span style="color:#f97316;font-weight:700">TRAIL ${fmtPrice(trailSL)}</span>`
+        : `<span style="color:#555;text-decoration:line-through;margin-right:6px">${fmtPrice(alert.sl_price)}</span><span style="color:#00ff88;font-weight:700">BREAKEVEN</span>`)
     : `<span style="color:#ff4444;font-weight:700">${fmtPrice(alert.sl_price)}</span>`;
 
   // Progress bar: 0% = SL (worst), 100% = TP2 (best)
@@ -592,6 +631,8 @@ function buildConfirmedAlertCard(alert, trade, capReached) {
       </div>
       <div class="ac-ts">${relTime(alert.fired_at)}</div>
     </div>`;
+
+  if (entryBanner) html += entryBanner;
 
   // ── IN TRADE status
   if (inTrade) {
@@ -637,8 +678,8 @@ function buildConfirmedAlertCard(alert, trade, capReached) {
       <div class="ac-detail-grid">
         <div class="ac-detail-row"><span class="ac-detail-label">MARGIN</span><span class="ac-detail-val" style="color:#ffffff">$${fmt(alert.margin, 0)}</span></div>
         <div class="ac-detail-row"><span class="ac-detail-label">ADX</span><span class="ac-detail-val" style="color:${adxColor}">${fmt(alert.adx, 1)}</span></div>
-        <div class="ac-detail-row"><span class="ac-detail-label">LEVERAGE</span><span class="ac-detail-val" style="color:#ffffff">${alert.leverage}x</span></div>
-        <div class="ac-detail-row"><span class="ac-detail-label">RSI 5M</span><span class="ac-detail-val" style="color:${rsiColor(alert.rsi_5m)}">${fmt(alert.rsi_5m ?? 50, 1)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">LEVERAGE</span><span class="ac-detail-val" style="color:#ffffff">${alert.leverage ?? alert.leverage ?? 6}x</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">RSI 1H PREV</span><span class="ac-detail-val" style="color:${rsiColor(alert.rsi_1h_prev)}">${fmt(alert.rsi_1h_prev ?? 50, 1)}</span></div>
         <div class="ac-detail-row"><span class="ac-detail-label">DOLLAR RISK</span><span class="ac-detail-val" style="color:#ffaa00">$${fmt(alert.dollar_risk, 2)}</span></div>
         <div class="ac-detail-row"><span class="ac-detail-label">RSI 1H</span><span class="ac-detail-val" style="color:${rsiColor(alert.rsi_1h)}">${fmt(alert.rsi_1h ?? 50, 1)}</span></div>
       </div>
@@ -703,22 +744,83 @@ function buildConfirmedAlertCard(alert, trade, capReached) {
   return html;
 }
 
+// ── Awaiting entry card builder ───────────────────────────────────────────────
+
+function buildAwaitingEntryCard(ae) {
+  const isLong   = ae.direction === 'LONG';
+  const dirBadge = isLong
+    ? `<span class="ac-dir-long">LONG</span>`
+    : `<span class="ac-dir-short">SHORT</span>`;
+  const threshold = ae.entry_rsi_threshold ?? (isLong ? 45 : 55);
+  const rsi5m     = ae.rsi_5m_current;
+  const remaining = ae.time_remaining_s ?? 0;
+  const remM  = Math.floor(remaining / 60);
+  const remS  = remaining % 60;
+  const rsiDisplay = rsi5m != null ? `5m RSI: <b>${fmt(rsi5m, 1)}</b>` : '5m RSI: polling…';
+  const waitingFor = isLong
+    ? `Waiting for 5m RSI to cross below ${threshold}`
+    : `Waiting for 5m RSI to cross above ${threshold}`;
+
+  return `
+    <div class="ac" style="border-left:3px solid #f97316">
+      <div>
+        <div class="ac-header-top">
+          <div class="ac-sig">
+            <span class="ac-sym">${ae.symbol}</span>
+            ${dirBadge}
+            <span class="ac-score" style="background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3)">${ae.score ?? 0}/7</span>
+          </div>
+          <div class="ac-right">
+            <span style="color:${(ae.adx || 0) >= 25 ? '#00ff88' : '#666'};font-weight:700">ADX ${fmt(ae.adx, 1)}</span>
+            <span style="color:${isLong ? '#00ff88' : '#ff4444'};font-weight:700">${isLong ? '▲ S.Bull' : '▼ S.Bear'}</span>
+          </div>
+        </div>
+        <div class="ac-ts">Signal confirmed ${relTime(ae.confirmed_at)}</div>
+      </div>
+      <div style="padding:10px 12px;background:#1a0e00;border:1px solid rgba(249,115,22,0.3);border-radius:6px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="
+            display:inline-flex;align-items:center;gap:6px;
+            padding:3px 10px;border-radius:4px;
+            background:rgba(249,115,22,0.15);border:1px solid rgba(249,115,22,0.4);
+            color:#f97316;font-size:10px;font-weight:700;letter-spacing:.06em;
+            animation:pending-pulse 1.4s infinite
+          ">◈ AWAITING PULLBACK ENTRY</span>
+          <span style="font-size:10px;color:#666">⏱ ${remM}m ${remS < 10 ? '0' : ''}${remS}s left</span>
+        </div>
+        <div style="font-size:11px;color:#aaa;margin-bottom:4px">${waitingFor}</div>
+        <div style="font-size:12px;color:#f97316;font-weight:700">${rsiDisplay}</div>
+        <div style="font-size:10px;color:#666;margin-top:4px">Timeout → market entry if no pullback</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
+        <div class="ac-detail-row"><span class="ac-detail-label">ENTRY ~</span><span class="ac-detail-val" style="color:#fff">${fmtPrice(ae.entry_price)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">SL</span><span class="ac-detail-val" style="color:#ff4444">${fmtPrice(ae.sl_price)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">TP1</span><span class="ac-detail-val" style="color:#ffaa00">${fmtPrice(ae.tp1_price)}</span></div>
+        <div class="ac-detail-row"><span class="ac-detail-label">TP2</span><span class="ac-detail-val" style="color:#00ff88">${fmtPrice(ae.tp2_price)}</span></div>
+      </div>
+    </div>`;
+}
+
 // ── Alerts render ─────────────────────────────────────────────────────────────
 
 function renderAlerts() {
   if (!state) return;
   const container = document.getElementById('alerts-container');
-  const alerts = (state.alerts || []).slice().reverse(); // newest first
-  const pendings = (state.pending_alerts || []).slice().reverse();
+  const allAlerts  = (state.alerts || []).slice().reverse(); // newest first
+  const pendings   = (state.pending_alerts || []).slice().reverse();
 
-  // Filter out pendings that already have a confirmed alert
-  const confirmedKeys = new Set(alerts.map(a => `${a.symbol}${a.direction}`));
+  // Separate awaiting-entry alerts from confirmed/triggered ones
+  const awaitingAlerts   = allAlerts.filter(a => a.status === 'awaiting_entry');
+  const confirmedAlerts  = allAlerts.filter(a => a.status !== 'awaiting_entry');
+
+  // Filter out pendings that already have a confirmed/awaiting alert
+  const confirmedKeys = new Set(allAlerts.map(a => `${a.symbol}${a.direction}`));
   const visiblePendings = pendings.filter(p => !confirmedKeys.has(`${p.symbol}${p.direction}`));
 
-  if (alerts.length === 0 && visiblePendings.length === 0) {
+  if (allAlerts.length === 0 && visiblePendings.length === 0) {
     container.innerHTML = `
       <div class="alerts-empty">
-        Scanning every 10s.<br>Alerts appear here when<br>TC conditions are met twice.
+        Scanning every 20s.<br>Alerts appear here when<br>TC conditions are met twice.
       </div>`;
     return;
   }
@@ -728,6 +830,11 @@ function renderAlerts() {
   const openTrades = state.open_trades || {};
 
   let html = '<div class="alerts-list">';
+
+  // ── Awaiting entry cards (orange) ────────────────────────────────────────
+  for (const ae of awaitingAlerts) {
+    html += buildAwaitingEntryCard(ae);
+  }
 
   // ── Pending cards (amber, no OPEN pill) ──────────────────────────────────
   for (const p of visiblePendings) {
@@ -748,7 +855,7 @@ function renderAlerts() {
             <span class="alert-sym">${p.symbol}</span>
             <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${p.direction}</span>
           </div>
-          <div class="alert-score">Score <span>${p.score}/7</span> · ADX <span style="color:${p.adx >= 30 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
+          <div class="alert-score">Score <span>${p.score}/7</span> · ADX <span style="color:${p.adx >= 25 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
         </div>
         <div class="alert-grid">
           <div class="ag-row">
@@ -756,8 +863,8 @@ function renderAlerts() {
             <span class="ag-val ${isLong ? 'trend-bull' : 'trend-bear'}">${p.trend}</span>
           </div>
           <div class="ag-row">
-            <span class="ag-label">RSI 5m · 1h</span>
-            <span class="ag-val"><span style="color:${rsiColor(p.rsi_5m)};font-weight:bold">${fmt(p.rsi_5m ?? 50, 1)}</span><span style="color:var(--muted)"> · </span><span style="color:${rsiColor(p.rsi_1h)};font-weight:bold">${fmt(p.rsi_1h ?? 50, 1)}</span></span>
+            <span class="ag-label">RSI 1H</span>
+            <span class="ag-val"><span style="color:${rsiColor(p.rsi_1h)};font-weight:bold">${fmt(p.rsi_1h ?? 50, 1)}</span></span>
           </div>
           <div class="ag-row">
             <span class="ag-label">First seen</span>
@@ -770,11 +877,24 @@ function renderAlerts() {
       </div>`;
   }
 
-  // ── Confirmed alert cards (new design) ───────────────────────────────────
-  for (const alert of alerts) {
+  // ── Confirmed / triggered alert cards ────────────────────────────────────
+  for (const alert of confirmedAlerts) {
     const key   = `${alert.symbol}${alert.direction}`;
     const trade = openTrades[key];
-    html += buildConfirmedAlertCard(alert, trade, capReached);
+
+    // Show ENTRY TRIGGERED banner if this is a just-fired entry
+    let entryBanner = '';
+    if (alert.status === 'entry_triggered') {
+      const entType  = alert.entry_type === 'PULLBACK' ? 'PULLBACK CONFIRMED' : 'TIMEOUT';
+      const entColor = alert.entry_type === 'PULLBACK' ? '#00ff88' : '#f97316';
+      entryBanner = `
+        <div style="padding:5px 10px;border-radius:4px;background:rgba(0,0,0,0.4);border:1px solid ${entColor}33;
+          color:${entColor};font-size:10px;font-weight:700;letter-spacing:.06em;margin-bottom:8px">
+          ⚡ ENTRY TRIGGERED — ${entType}
+        </div>`;
+    }
+
+    html += buildConfirmedAlertCard(alert, trade, capReached, entryBanner);
   }
 
   html += '</div>';
