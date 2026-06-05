@@ -822,6 +822,9 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "trend": trend, "adx": round(adx_1h, 1),
                     "rsi_1h": round(rsi_1h, 1), "first_seen": int(time.time()),
                 }
+                if prev < TC_MIN_SCORE:
+                    logger.info("[STATE] %s %s gates=%d score=%d consecutive=1 state=QUALIFYING",
+                                symbol, direction, _h_log, score)
             _prev_scores[key] = score
         else:
             _prev_scores[key] = 0
