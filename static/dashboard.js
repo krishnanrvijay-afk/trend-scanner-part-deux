@@ -265,7 +265,7 @@ function renderHeader() {
       closestEl.innerHTML =
         `<span style="color:#fff">${cp.symbol}</span>&nbsp;` +
         `<span style="color:${dirColor}">${cp.direction}</span>&nbsp;` +
-        `<span style="color:#ffaa00">${cp.gates_passing}/7</span>${hcFail}`;
+        `<span style="color:#ffaa00">${cp.gates_passing}/6</span>${hcFail}`;
     } else {
       closestEl.textContent = '—';
       closestEl.style.color = '#444';
@@ -328,7 +328,7 @@ function renderScanPulse() {
         `<span style="color:#ffffff">closest:</span> ` +
         `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
         `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
-        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/7${failStr})</span>`;
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/6${failStr})</span>`;
     } else {
       cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
     }
@@ -409,9 +409,9 @@ function buildPairRowHtml(p, promotedEntry) {
   const gs = p.gates_status || {};
 
   // Hard gate colors: amber only on the ONE blocking gate (hardPassing === 3)
-  const hardPassing = [gs.trend_pass, gs.adx_pass, gs.depth_pass, gs.j_pass].filter(Boolean).length;
-  const allHardPass  = hardPassing === 4;
-  const oneHardFail  = hardPassing === 3;
+  const hardPassing = [gs.trend_pass, gs.adx_pass, gs.depth_pass].filter(Boolean).length;
+  const allHardPass  = hardPassing === 3;
+  const oneHardFail  = hardPassing === 2;
   function hColor(pass) {
     return pass ? '#00ff88' : (oneHardFail ? '#ffaa00' : '#444444');
   }
@@ -425,7 +425,7 @@ function buildPairRowHtml(p, promotedEntry) {
   const chk = v => v ? '✓' : '✗';
   const tip = [
     `TREND ${chk(gs.trend_pass)}`, `ADX ${chk(gs.adx_pass)}`,
-    `DEPTH ${chk(gs.depth_pass)}`, `J ${chk(gs.j_pass)}`,
+    `DEPTH ${chk(gs.depth_pass)}`,
     `MA STACK ${chk(gs.ma_pass)}`, `RSI ${chk(gs.rsi_pass)}`,
     `VOLUME ${chk(gs.vol_pass)}`,
   ].join(' · ');
@@ -434,7 +434,6 @@ function buildPairRowHtml(p, promotedEntry) {
     `<span class="gate-dot" style="background:${hColor(gs.trend_pass)}"></span>` +
     `<span class="gate-dot" style="background:${hColor(gs.adx_pass)}"></span>` +
     `<span class="gate-dot" style="background:${hColor(gs.depth_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${hColor(gs.j_pass)}"></span>` +
     `<span class="gate-sep"></span>` +
     `<span class="gate-dot" style="background:${sColor(gs.ma_pass)}"></span>` +
     `<span class="gate-dot" style="background:${rsColor}"></span>` +
