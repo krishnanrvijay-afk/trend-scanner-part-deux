@@ -19,9 +19,11 @@ except ImportError:
 from config import (
     PAIRS, ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
     DEPTH_GATE_PCT,
+    SCAN_INTERVAL_SECONDS,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE,
     COOLDOWN_MINUTES, PAPER_MODE,
     PROMOTED_SLOTS, ROTATION_WINDOW_MINUTES,
+    UNIVERSE_SCAN_ENABLED,
     UNIVERSE_VOLUME_MIN_USD, UNIVERSE_OI_MIN_USD,
     UNIVERSE_FUNDING_MIN_ABS, UNIVERSE_VOLUME_FALLBACK_MULTIPLIER,
 )
@@ -53,6 +55,11 @@ logger.info(
     ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
     DEPTH_GATE_PCT,
     MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
+)
+logger.info(
+    "[RESET] ADX_MIN=%s SCAN=%ss PAPER=%s UNIVERSE=%s null_price_guard=active",
+    TC_ADX_MIN, SCAN_INTERVAL_SECONDS, PAPER_MODE,
+    "On" if UNIVERSE_SCAN_ENABLED else "Off",
 )
 
 
@@ -421,12 +428,22 @@ def compute_gates_status(
 
 def score_tc_long(
     symbol: str,
+    current_price: float,
     trend: str, adx_1h: float,
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
     last_vol: float, vol_ma10: float,
     bid_pct: float, j5: float,
 ) -> int:
+    _guard = {
+        "current_price": current_price, "adx_1h": adx_1h,
+        "rsi_5m": rsi_5m, "rsi_5m_prev": rsi_5m_prev, "rsi_1h": rsi_1h,
+        "bid_pct": bid_pct, "ma10": ma10, "ma30": ma30, "ma60": ma60,
+    }
+    for _f, _v in _guard.items():
+        if not _v or (_v != _v):  # zero/None or NaN
+            logger.warning("[DATA INVALID] %s LONG field=%s value=%s scan skipped", symbol, _f, _v)
+            return 0
     if trend != "Strong Bull": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if bid_pct < 55.0: return 0
@@ -472,12 +489,22 @@ def score_tc_long(
 
 def score_tc_short(
     symbol: str,
+    current_price: float,
     trend: str, adx_1h: float,
     ma10: float, ma30: float, ma60: float,
     rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
     last_vol: float, vol_ma10: float,
     ask_pct: float, j5: float,
 ) -> int:
+    _guard = {
+        "current_price": current_price, "adx_1h": adx_1h,
+        "rsi_5m": rsi_5m, "rsi_5m_prev": rsi_5m_prev, "rsi_1h": rsi_1h,
+        "ask_pct": ask_pct, "ma10": ma10, "ma30": ma30, "ma60": ma60,
+    }
+    for _f, _v in _guard.items():
+        if not _v or (_v != _v):  # zero/None or NaN
+            logger.warning("[DATA INVALID] %s SHORT field=%s value=%s scan skipped", symbol, _f, _v)
+            return 0
     if trend != "Strong Bear": return 0
     if adx_1h < TC_ADX_MIN: return 0
     if ask_pct < 55.0: return 0
@@ -651,12 +678,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     atr = compute_atr_5m(df_5m)
 
     long_score = score_tc_long(
-        symbol, trend, adx_1h, ma10, ma30, ma60,
+        symbol, price, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
         last_vol, vol_ma10, bid_pct, j5,
     )
     short_score = score_tc_short(
-        symbol, trend, adx_1h, ma10, ma30, ma60,
+        symbol, price, trend, adx_1h, ma10, ma30, ma60,
         rsi_5m, rsi_5m_prev, rsi_1h,
         last_vol, vol_ma10, ask_pct, j5,
     )
