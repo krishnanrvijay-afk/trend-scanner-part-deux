@@ -703,6 +703,23 @@
     <span class="badge {{ 'badge-paper' if paper_mode else 'badge-live' }}">
       {{ '● PAPER' if paper_mode else '⚡ LIVE' }}
     </span>
+    <span id="circuit-breaker-badge" style="
+      display:none;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;
+      background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.45);
+      color:#ff4444;font-size:11px;font-weight:700;letter-spacing:.06em;
+      animation:pending-pulse 1.2s infinite
+    ">⛔ CIRCUIT BREAKER ACTIVE</span>
+    <button id="circuit-breaker-reset" onclick="resetCircuitBreaker()" style="
+      display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:4px;
+      background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);
+      color:#ff4444;font-size:10px;font-weight:700;letter-spacing:.06em;
+      cursor:pointer;font-family:var(--font)
+    ">↺ RESET</button>
+    <span id="hc-losses-in-row" style="
+      display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:4px;
+      background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.3);
+      color:#ffaa00;font-size:10px;font-weight:600;letter-spacing:.04em
+    "></span>
   </div>
   <!-- Dual info cards -->
   <div class="header-cards">
