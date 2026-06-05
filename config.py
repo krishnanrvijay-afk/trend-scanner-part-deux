@@ -5,7 +5,7 @@ PAIRS = ["BTC", "ETH", "SOL", "XRP", "DOGE", "SUI", "NEAR", "OP", "APT", "LINK",
 SCAN_INTERVAL_SECONDS = 20
 PRICE_INTERVAL_SECONDS = 1
 
-ALERT_THRESHOLD = 8
+ALERT_THRESHOLD = 3
 TC_MIN_SCORE = 3
 TC_ADX_MIN = 30
 DEPTH_GATE_PCT = 60
@@ -44,8 +44,8 @@ CONSECUTIVE_LOSS_STOP = 5  # pause auto-entry after this many consecutive SL hit
 TRAILING_TP_PCT = 0.0015   # 0.15% trail from extreme price since TP1
 
 # ── Dynamic leverage tiers ────────────────────────────────────────────────────
-LEVERAGE_TIER_HIGH = 10   # ADX >= 60 AND score == 7
-LEVERAGE_TIER_MID  = 8    # ADX >= 50 AND score >= 6
+LEVERAGE_TIER_HIGH = 10   # ADX >= 60 AND score == 4
+LEVERAGE_TIER_MID  = 8    # ADX >= 50 AND score >= 3
 LEVERAGE_TIER_LOW  = 6    # all other cases
 
 # ── Universe scanner ──────────────────────────────────────────────────────────
