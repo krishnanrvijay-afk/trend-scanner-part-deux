@@ -38,7 +38,7 @@ from config import (
 from hl_client import HLClient
 from scanner import (run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
                      get_cooldown_remaining, get_promoted_pairs, get_universe_state,
-                     run_universe_scan, get_awaiting_entry)
+                     run_universe_scan, get_awaiting_entry, get_pair_signal_info)
 
 # ── Circuit breaker state (module-level) ──────────────────────────────────────
 consecutive_losses:    int  = 0
@@ -119,6 +119,48 @@ class AppState:
 
         pair_order = {sym: i for i, sym in enumerate(PAIRS)}
         pair_states_out.sort(key=lambda ps: pair_order.get(ps.get("symbol", ""), 999))
+
+        # ── Signal-column state augmentation (layered priority) ──────────────
+        for i, ps in enumerate(pair_states_out):
+            sym  = ps.get("symbol", "")
+            gs   = ps.get("gates_status", {})
+            hard = (int(bool(gs.get("trend_pass"))) +
+                    int(bool(gs.get("adx_pass"))) +
+                    int(bool(gs.get("depth_pass"))))
+            l_sc = ps.get("long_score", 0)
+            s_sc = ps.get("short_score", 0)
+            cd   = ps.get("cooldown_remaining_seconds") or 0
+
+            sig  = get_pair_signal_info(sym)
+            kl, ks = f"{sym}LONG", f"{sym}SHORT"
+
+            if circuit_breaker_active:
+                sst = "PAUSED"
+            elif kl in trades_serialised or ks in trades_serialised:
+                sst = "IN_TRADE"
+            elif cd > 0:
+                sst = "COOLDOWN"
+            elif sig["signal_state"] == "AWAITING_ENTRY":
+                sst = "AWAITING_ENTRY"
+            elif sig["signal_state"] == "QUALIFYING":
+                sst = "QUALIFYING"
+            elif hard > 0:
+                sst = "GATES"
+            else:
+                sst = "SCANNING"
+
+            direction = sig["direction"]
+            score = (l_sc if direction == "LONG" else s_sc) if direction else max(l_sc, s_sc)
+
+            pair_states_out[i] = {
+                **ps,
+                "signal_state":      sst,
+                "signal_direction":  direction,
+                "signal_hard_gates": hard,
+                "signal_score":      score,
+                "signal_rsi_5m":     sig["rsi_5m"],
+                "signal_rsi_thresh": sig["rsi_thresh"],
+            }
 
         # Closest pair ranking
         closest_pair = None
