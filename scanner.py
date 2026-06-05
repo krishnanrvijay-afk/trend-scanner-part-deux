@@ -60,6 +60,7 @@ _universe_state: dict = {
 
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_MIN=%s | DEPTH=%s%%"
+    " | J_GATE=removed_display_only"
     " | TIMEFRAME=1h_signal/5m_entry | SL=%.1f%%_FIXED | COOLDOWN=%smin"
     " | CIRCUIT_BREAKER=%s_losses | TRAILING_TP=%.2f%%"
     " | LEVERAGE=%sx(7/7+ADX60)/%sx(6/7+ADX50)/%sx(default) | PAPER=%s",
@@ -385,7 +386,7 @@ def compute_gates_status(
     """
     best: dict = {
         "gates_direction": "NONE",
-        "trend_pass": False, "adx_pass": False, "depth_pass": False, "j_pass": False,
+        "trend_pass": False, "adx_pass": False, "depth_pass": False,
         "ma_pass": False, "rsi_pass": False, "rsi_partial": False, "vol_pass": False,
         "gates_passing": 0,
         "gates_total":   0,
@@ -398,24 +399,22 @@ def compute_gates_status(
 
         if direction == "LONG":
             depth_pass = bid_pct >= DEPTH_GATE_PCT
-            j_pass = (j1h < 45.0 or j1h > 55.0) if adx_1h >= 50 else (j1h < 20.0)
         else:
             depth_pass = ask_pct >= DEPTH_GATE_PCT
-            j_pass = (j1h > 55.0 or j1h < 45.0) if adx_1h >= 50 else (j1h > 80.0)
 
-        gates_passing = int(trend_pass) + int(adx_pass) + int(depth_pass) + int(j_pass)
+        gates_passing = int(trend_pass) + int(adx_pass) + int(depth_pass)
 
         # Soft criteria
         if direction == "LONG":
             ma_pass    = bool(ma10 and ma30 and ma60 and ma10 > ma30 > ma60)
-            is_cap     = adx_1h >= 50 and j1h > 55.0
+            is_cap     = adx_1h >= 50
             p4         = bool(rsi_1h > 60 and rsi_1h < rsi_1h_prev) if is_cap \
                          else bool(rsi_1h < 40 and rsi_1h > rsi_1h_prev)
             p5         = bool(rsi_1h > 50)
             vol_thresh = 1.2 if is_cap else 1.5
         else:
             ma_pass    = bool(ma10 and ma30 and ma60 and ma10 < ma30 < ma60)
-            is_cap     = adx_1h >= 50 and j1h < 45.0
+            is_cap     = adx_1h >= 50
             p4         = bool(rsi_1h < 40 and rsi_1h > rsi_1h_prev) if is_cap \
                          else bool(rsi_1h > 60 and rsi_1h < rsi_1h_prev)
             p5         = bool(rsi_1h < 50)
@@ -428,27 +427,27 @@ def compute_gates_status(
         gates_total = gates_passing + int(ma_pass) + int(rsi_pass) + int(vol_pass)
 
         failing_gate: Optional[str] = None
-        all_7 = [
-            ("TREND", trend_pass), ("ADX", adx_pass), ("DEPTH", depth_pass), ("J", j_pass),
+        all_6 = [
+            ("TREND", trend_pass), ("ADX", adx_pass), ("DEPTH", depth_pass),
             ("MA", ma_pass), ("RSI", rsi_pass), ("VOL", vol_pass),
         ]
-        if gates_total == 6:
-            for name, passing in all_7:
+        if gates_total == 5:
+            for name, passing in all_6:
                 if not passing:
                     failing_gate = name
                     break
-        elif gates_passing == 3:
-            for name, passing in all_7[:4]:
+        elif gates_passing == 2:
+            for name, passing in all_6[:3]:
                 if not passing:
                     failing_gate = name
                     break
 
         candidate = {
             "gates_direction": direction,
-            "trend_pass":   trend_pass,  "adx_pass":    adx_pass,
-            "depth_pass":   depth_pass,  "j_pass":      j_pass,
-            "ma_pass":      ma_pass,     "rsi_pass":    rsi_pass,
-            "rsi_partial":  rsi_partial, "vol_pass":    vol_pass,
+            "trend_pass":   trend_pass,  "adx_pass":  adx_pass,
+            "depth_pass":   depth_pass,
+            "ma_pass":      ma_pass,     "rsi_pass":  rsi_pass,
+            "rsi_partial":  rsi_partial, "vol_pass":  vol_pass,
             "gates_passing": gates_passing,
             "gates_total":   gates_total,
             "failing_gate":  failing_gate,
@@ -493,25 +492,7 @@ def score_tc_long(
     if adx_1h < TC_ADX_MIN:   return 0
     if bid_pct < 55.0:         return 0
 
-    # J gate — two-tier based on ADX strength
-    if adx_1h >= 50:
-        if j1h < 45.0:
-            is_cap    = False
-            j_condition = "OVERSOLD"
-        elif j1h > 55.0:
-            is_cap    = True
-            j_condition = "MOMENTUM"
-        else:
-            return 0
-        logger.info("[GATE] %s LONG adx=%.1f tier=RELAXED j1h=%.1f condition=%s pass.",
-                    symbol, adx_1h, j1h, j_condition)
-    else:
-        is_cap = False
-        if j1h < 20.0:
-            logger.info("[GATE] %s LONG adx=%.1f tier=STANDARD j1h=%.1f OVERSOLD pass.",
-                        symbol, adx_1h, j1h)
-        else:
-            return 0
+    is_cap = adx_1h >= 50
 
     score = 2  # P1 + P2 (free — guaranteed by gates passing)
     p3 = int(ma10 > ma30 > ma60)
@@ -567,26 +548,7 @@ def score_tc_short(
     if adx_1h < TC_ADX_MIN:   return 0
     if ask_pct < 55.0:         return 0
 
-    # J gate — two-tier based on ADX strength
-    if adx_1h >= 50:
-        if j1h > 55.0:
-            is_cap    = False
-            j_condition = "OVERBOUGHT"
-        elif j1h < 45.0:
-            is_cap    = True
-            j_condition = "CAPITULATION"
-        else:
-            return 0
-        logger.info("[GATE] %s SHORT adx=%.1f tier=RELAXED j1h=%.1f condition=%s pass.",
-                    symbol, adx_1h, j1h, j_condition)
-    else:
-        is_cap = False
-        if j1h > 80.0:
-            logger.info("[GATE] %s SHORT adx=%.1f tier=STANDARD j1h=%.1f OVERBOUGHT pass.",
-                        symbol, adx_1h, j1h)
-        else:
-            return 0
-
+    is_cap = adx_1h >= 50
     tier = "CAPITULATION" if is_cap else "STANDARD"
     score = 2  # P1 + P2 free
     p3 = int(ma10 < ma30 < ma60)
