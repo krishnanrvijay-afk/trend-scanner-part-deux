@@ -265,7 +265,7 @@ function renderHeader() {
       closestEl.innerHTML =
         `<span style="color:#fff">${cp.symbol}</span>&nbsp;` +
         `<span style="color:${dirColor}">${cp.direction}</span>&nbsp;` +
-        `<span style="color:#ffaa00">${cp.gates_passing}/6</span>${hcFail}`;
+        `<span style="color:#ffaa00">${cp.gates_passing}/4</span>${hcFail}`;
     } else {
       closestEl.textContent = '—';
       closestEl.style.color = '#444';
@@ -328,7 +328,7 @@ function renderScanPulse() {
         `<span style="color:#ffffff">closest:</span> ` +
         `<span style="color:#ffffff;font-weight:bold">${cp.symbol}</span> ` +
         `<span style="color:${dirColor};font-weight:bold">${cp.direction}</span> ` +
-        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/6${failStr})</span>`;
+        `<span style="color:#ffaa00;font-weight:bold">(${cp.gates_passing}/4${failStr})</span>`;
     } else {
       cpEl.innerHTML = `<span style="color:#444444">All gates quiet</span>`;
     }
@@ -571,7 +571,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
     : `<span class="ac-dir-short">SHORT</span>`;
 
   const score    = alert.score ?? 0;
-  const scoreMax = 7;
+  const scoreMax = 4;
   const scoreColor = score >= scoreMax ? '#00ff88' : '#ffaa00';
   const scoreChip  = `<span class="ac-score" style="background:${scoreColor}22;color:${scoreColor};border:1px solid ${scoreColor}44">${score}/${scoreMax}</span>`;
 
@@ -767,7 +767,7 @@ function buildAwaitingEntryCard(ae) {
           <div class="ac-sig">
             <span class="ac-sym">${ae.symbol}</span>
             ${dirBadge}
-            <span class="ac-score" style="background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3)">${ae.score ?? 0}/7</span>
+            <span class="ac-score" style="background:rgba(249,115,22,0.15);color:#f97316;border:1px solid rgba(249,115,22,0.3)">${ae.score ?? 0}/4</span>
           </div>
           <div class="ac-right">
             <span style="color:${(ae.adx || 0) >= 25 ? '#00ff88' : '#666'};font-weight:700">ADX ${fmt(ae.adx, 1)}</span>
@@ -854,7 +854,7 @@ function renderAlerts() {
             <span class="alert-sym">${p.symbol}</span>
             <span class="dir-pill ${isLong ? 'dir-long' : 'dir-short'}">${p.direction}</span>
           </div>
-          <div class="alert-score">Score <span>${p.score}/7</span> · ADX <span style="color:${p.adx >= 25 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
+          <div class="alert-score">Score <span>${p.score}/4</span> · ADX <span style="color:${p.adx >= 25 ? '#00ff88' : '#666666'}">${fmt(p.adx, 1)}</span></div>
         </div>
         <div class="alert-grid">
           <div class="ag-row">
