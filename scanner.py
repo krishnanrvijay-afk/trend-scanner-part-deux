@@ -74,7 +74,7 @@ logger.info(
     " | depth_score_threshold_fixed=DEPTH_GATE_PCT (was hardcoded 55)",
     TC_ADX_MIN, TC_MIN_SCORE, DEPTH_GATE_PCT,
 )
-logger.info("[CONFIG] TC_MIN_SCORE=%d confirmed | max_score=4 | score_cap=enforced", TC_MIN_SCORE)
+logger.info("[CONFIG] TC_MIN_SCORE=%d ALERT_THRESHOLD=%d MAX_SCORE=4 confirmed | score_cap=enforced", TC_MIN_SCORE, ALERT_THRESHOLD)
 
 
 # ── Cooldown helpers ──────────────────────────────────────────────────────────
