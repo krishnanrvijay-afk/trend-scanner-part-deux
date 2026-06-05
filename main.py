@@ -170,7 +170,7 @@ class AppState:
             gs  = ps.get("gates_status", {})
             tot = gs.get("gates_total", 0)
             adx = ps.get("adx", 0.0)
-            if 0 < tot < 6:
+            if 0 < tot < 7:
                 if tot > max_total or (tot == max_total and adx > max_adx_seen):
                     max_total    = tot
                     max_adx_seen = adx
