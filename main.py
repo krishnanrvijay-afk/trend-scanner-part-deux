@@ -222,6 +222,10 @@ def _calc_r(entry: float, close: float, direction: str, sl_dist) -> float:
 # ── Trade log helper ──────────────────────────────────────────────────────────
 
 def _append_trade_log(trade: dict, exit_price: float, reason: str, pnl: float, r: float):
+    entry_price = trade.get("entry_price")
+    null_price = not entry_price or not exit_price
+    if null_price:
+        print(f"[TRADE BLOCKED] {trade.get('symbol')} {trade.get('direction')} null price in log — entry={entry_price} exit={exit_price}")
     app_state.trade_log.append({
         "timestamp_opened": trade.get("opened_at", 0),
         "timestamp_closed": int(time.time()),
@@ -229,14 +233,14 @@ def _append_trade_log(trade: dict, exit_price: float, reason: str, pnl: float, r
         "direction": trade["direction"],
         "score": trade.get("score"),
         "adx": trade.get("adx"),
-        "entry_price": trade["entry_price"],
+        "entry_price": entry_price,
         "sl_price": trade.get("sl_price"),
         "tp1_price": trade.get("tp1_price"),
         "tp2_price": trade.get("tp2_price"),
         "exit_price": exit_price,
-        "exit_reason": reason,
-        "pnl_usd": round(pnl, 2),
-        "r_value": r,
+        "exit_reason": "ERROR_NULL_PRICE" if null_price else reason,
+        "pnl_usd": None if null_price else round(pnl, 2),
+        "r_value": None if null_price else r,
         "duration_seconds": int(time.time()) - trade.get("opened_at", int(time.time())),
     })
 
@@ -259,6 +263,9 @@ async def _do_open_trade(
         return None, result.get("msg", "open_failed")
 
     entry = result["entry_price"]
+    if not entry or entry == 0.0:
+        print(f"[TRADE BLOCKED] {symbol} {direction} null price rejected")
+        return None, "null_price"
     size = result.get("size", (margin_usdc * leverage) / entry if entry else 0)
 
     # dollar_risk_usd: authoritative 1R dollar amount = margin × leverage × sl_pct%
@@ -441,13 +448,17 @@ async def scan_loop():
                     if PAPER_MODE:
                         trade_key = app_state.get_trade_key(alert["symbol"], alert["direction"])
                         if trade_key not in app_state.open_trades and not app_state.cap_reached:
-                            app_state.auto_pending[trade_key] = {
-                                "symbol": alert["symbol"],
-                                "direction": alert["direction"],
-                                "fire_at": time.time() + 3,
-                            }
-                            asyncio.create_task(_auto_open_trade(trade_key, alert))
-                            print(f"[auto-entry] {alert['symbol']} {alert['direction']} scheduled in 3s")
+                            alert_price = alert.get("entry_price")
+                            if not alert_price or alert_price == 0.0:
+                                print(f"[TRADE BLOCKED] {alert['symbol']} {alert['direction']} null price rejected")
+                            else:
+                                app_state.auto_pending[trade_key] = {
+                                    "symbol": alert["symbol"],
+                                    "direction": alert["direction"],
+                                    "fire_at": time.time() + 3,
+                                }
+                                asyncio.create_task(_auto_open_trade(trade_key, alert))
+                                print(f"[auto-entry] {alert['symbol']} {alert['direction']} scheduled in 3s")
 
             app_state.alerts = app_state.alerts[-50:]
             app_state.last_scan_at = int(time.time())
