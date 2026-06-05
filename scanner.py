@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from config import (
-    PAIRS, TC_ADX_MIN, DEPTH_GATE_PCT,
+    PAIRS, TC_ADX_MIN, DEPTH_GATE_PCT, PAIR_ADX_OVERRIDES,
     SL_PCT, TP1_R_MULTIPLIER, TP2_R_MULTIPLIER,
     LEVERAGE_TIER_HIGH, LEVERAGE_TIER_MID, LEVERAGE_TIER_LOW,
     COOLDOWN_SECONDS, CONSECUTIVE_LOSS_STOP,
@@ -25,13 +25,16 @@ _cooldowns:    dict[str, float] = {}   # key → expiry timestamp
 
 CONFIRMED_SHOW_SECONDS = 30  # show ALERT state in signal column for this long
 
+_overrides_str = " ".join(f"{k}:{v}" for k, v in PAIR_ADX_OVERRIDES.items()) or "none"
 logger.info(
     "[CONFIG] ADX=%d DEPTH=%d%% SL=%.1f%% TP1=%.1f%% TP2=%.1f%%"
-    " COOLDOWN=%dmin CIRCUIT=%d LEVERAGE=%dx/%dx/%dx PAPER=%s CONDITIONS=4 NO_SCORING",
+    " COOLDOWN=%dmin CIRCUIT=%d LEVERAGE=%dx/%dx/%dx PAPER=%s CONDITIONS=4 NO_SCORING"
+    " ADX_OVERRIDES=%s",
     TC_ADX_MIN, DEPTH_GATE_PCT,
     SL_PCT * 100, SL_PCT * TP1_R_MULTIPLIER * 100, SL_PCT * TP2_R_MULTIPLIER * 100,
     COOLDOWN_SECONDS // 60, CONSECUTIVE_LOSS_STOP,
     LEVERAGE_TIER_HIGH, LEVERAGE_TIER_MID, LEVERAGE_TIER_LOW, PAPER_MODE,
+    _overrides_str,
 )
 
 
@@ -242,11 +245,12 @@ def check_tc_signal(
     ma10: float, ma30: float, ma60: float,
     adx_1h: float,
     bid_pct: float, ask_pct: float,
+    adx_min: int = TC_ADX_MIN,
 ) -> tuple[bool, dict]:
     """Check all four conditions. Returns (signal, conditions).
 
     C1 TREND  — price aligned with full MA stack direction.
-    C2 ADX    — adx_1h >= TC_ADX_MIN.
+    C2 ADX    — adx_1h >= adx_min (global TC_ADX_MIN or per-pair override).
     C3 DEPTH  — orderbook depth >= DEPTH_GATE_PCT on the correct side.
     C4 MA     — MA10/MA30/MA60 strictly stacked (implied by C1, shown separately).
     """
@@ -258,7 +262,7 @@ def check_tc_signal(
         trend_pass = bool(price < ma10 < ma30 < ma60)
         ma_pass    = bool(ma10 < ma30 < ma60)
         depth_pass = ask_pct >= DEPTH_GATE_PCT
-    adx_pass = adx_1h >= TC_ADX_MIN
+    adx_pass = adx_1h >= adx_min
     signal   = trend_pass and adx_pass and depth_pass  # ma_pass implied by trend_pass
     return signal, {
         "trend_pass": trend_pass,
@@ -275,6 +279,7 @@ def compute_gates_status(
     ma10: float, ma30: float, ma60: float,
     adx_1h: float,
     bid_pct: float, ask_pct: float,
+    adx_min: int = TC_ADX_MIN,
 ) -> dict:
     """Return best-direction 4-gate status for the pair table display."""
     best: dict = {
@@ -284,7 +289,7 @@ def compute_gates_status(
         "gates_passing": 0, "failing_gate": None,
     }
     for direction in ("LONG", "SHORT"):
-        _, conds = check_tc_signal(direction, price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct)
+        _, conds = check_tc_signal(direction, price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min)
         n = sum([conds["trend_pass"], conds["adx_pass"], conds["depth_pass"], conds["ma_pass"]])
 
         failing: Optional[str] = None
@@ -389,11 +394,18 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     vol_ratio   = round(last_vol / vol_ma10, 2) if vol_ma10 > 0 else 0.0
     j1h_clamped = round(max(0.0, min(100.0, j1h)), 1)
 
+    # Per-pair ADX floor override
+    adx_min = PAIR_ADX_OVERRIDES.get(symbol, TC_ADX_MIN)
+    if adx_min != TC_ADX_MIN:
+        logger.info(
+            "[ADX OVERRIDE] %s minimum ADX=%d (global=%d)", symbol, adx_min, TC_ADX_MIN
+        )
+
     alerts = []
     for direction in ("LONG", "SHORT"):
         key    = f"{symbol}{direction}"
         signal, conds = check_tc_signal(
-            direction, price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct
+            direction, price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min
         )
 
         depth_val = ask_pct if direction == "SHORT" else bid_pct
@@ -428,6 +440,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "margin":       DEFAULT_MARGIN_USDC,
                     "leverage":     lev,
                     "dollar_risk":  dollar_risk,
+                    "score":        4,
                     **sl_tp,
                     "fired_at":     int(time.time()),
                     "status":       "",
@@ -470,7 +483,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "ma60":         round(ma60, 4),
         "alerts":       alerts,
         "gates_status": compute_gates_status(
-            price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct
+            price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min
         ),
         "scanned_at":   int(time.time()),
     }
