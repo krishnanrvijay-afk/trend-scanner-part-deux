@@ -97,6 +97,37 @@ def _get_signal_state(symbol: str) -> str:
     return "none"
 
 
+def get_pair_signal_info(symbol: str) -> dict:
+    """Return enriched scanner-level signal state for the Signal column.
+
+    Priority: AWAITING_ENTRY → QUALIFYING → SCANNING.
+    PAUSED / IN_TRADE / COOLDOWN are layered on top in main.py serialise().
+    """
+    key_long  = f"{symbol}LONG"
+    key_short = f"{symbol}SHORT"
+
+    for key, direction in [(key_long, "LONG"), (key_short, "SHORT")]:
+        if key in _awaiting_entry:
+            ae = _awaiting_entry[key]
+            return {
+                "signal_state": "AWAITING_ENTRY",
+                "direction":    direction,
+                "rsi_5m":       ae.get("rsi_5m_current"),
+                "rsi_thresh":   ae.get("entry_rsi_threshold"),
+            }
+
+    for key, direction in [(key_long, "LONG"), (key_short, "SHORT")]:
+        if key in _pending:
+            return {
+                "signal_state": "QUALIFYING",
+                "direction":    direction,
+                "rsi_5m":       None,
+                "rsi_thresh":   None,
+            }
+
+    return {"signal_state": "SCANNING", "direction": None, "rsi_5m": None, "rsi_thresh": None}
+
+
 def get_pending() -> list[dict]:
     return list(_pending.values())
 
