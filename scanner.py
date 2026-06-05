@@ -74,6 +74,7 @@ logger.info(
     " | depth_score_threshold_fixed=DEPTH_GATE_PCT (was hardcoded 55)",
     TC_ADX_MIN, TC_MIN_SCORE, DEPTH_GATE_PCT,
 )
+logger.info("[CONFIG] TC_MIN_SCORE=%d confirmed | max_score=4 | score_cap=enforced", TC_MIN_SCORE)
 
 
 # ── Cooldown helpers ──────────────────────────────────────────────────────────
@@ -546,6 +547,9 @@ def score_tc_long(
     p4 = int(vol_ma10 > 0 and last_vol > (1.2 if is_cap else 1.5) * vol_ma10)
 
     score = p1 + p2 + p3 + p4
+    if score > 4:
+        logger.error("[SCORE ERROR] %s LONG score=%d exceeds maximum of 4 — check scoring logic", symbol, score)
+    score = min(score, 4)
 
     if score < TC_MIN_SCORE:
         reasons = []
@@ -601,6 +605,9 @@ def score_tc_short(
     p4 = int(vol_ma10 > 0 and last_vol > (1.2 if is_cap else 1.5) * vol_ma10)
 
     score = p1 + p2 + p3 + p4
+    if score > 4:
+        logger.error("[SCORE ERROR] %s SHORT score=%d exceeds maximum of 4 — check scoring logic", symbol, score)
+    score = min(score, 4)
 
     vol_ratio = (last_vol / vol_ma10) if vol_ma10 > 0 else 0.0
     logger.info(
