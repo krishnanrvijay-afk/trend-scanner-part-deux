@@ -407,7 +407,7 @@ function buildPairRowHtml(p, promotedEntry) {
       break;
     }
     case 'QUALIFYING':
-      sigCell = `<span class="sig-pulse" style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.04em" title="Scan 1 confirmed — awaiting scan 2 · score ${sigScore}/4">① QUALIFYING</span>`;
+      sigCell = `<span class="sig-pulse" style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.04em" title="Scan 1 confirmed — awaiting scan 2">① QUALIFYING ${sigScore}/4</span>`;
       break;
     case 'GATES':
       sigCell = `<span style="color:#ffaa00;font-size:10px;font-weight:600" title="${sigHard}/3 hard gates passing">${sigHard}/3 GATES</span>`;
@@ -418,26 +418,27 @@ function buildPairRowHtml(p, promotedEntry) {
 
   const gs = p.gates_status || {};
 
-  // Hard gate colors: amber only on the ONE blocking gate (hardPassing === 3)
+  // Hard gate colors: amber only on the ONE blocking gate (exactly 2 of 3 passing)
   const hardPassing = [gs.trend_pass, gs.adx_pass, gs.depth_pass].filter(Boolean).length;
   const allHardPass  = hardPassing === 3;
   const oneHardFail  = hardPassing === 2;
   function hColor(pass) {
     return pass ? '#00ff88' : (oneHardFail ? '#ffaa00' : '#444444');
   }
-  // Soft criteria colors: amber if failing but all hard gates pass (one step away)
+  // Soft P1-P4 colors: amber if all hard gates pass but this criterion is failing
   function sColor(pass) {
     return pass ? '#00ff88' : (allHardPass ? '#ffaa00' : '#444444');
   }
-  // RSI dot: green=both P4+P5, amber=one passes, grey=both fail
-  const rsColor = gs.rsi_pass ? '#00ff88' : (gs.rsi_partial ? '#ffaa00' : '#444444');
 
   const chk = v => v ? '✓' : '✗';
   const tip = [
-    `TREND ${chk(gs.trend_pass)}`, `ADX ${chk(gs.adx_pass)}`,
+    `TREND ${chk(gs.trend_pass)}`,
+    `ADX ${chk(gs.adx_pass)}`,
     `DEPTH ${chk(gs.depth_pass)}`,
-    `MA STACK ${chk(gs.ma_pass)}`, `RSI ${chk(gs.rsi_pass)}`,
-    `VOLUME ${chk(gs.vol_pass)}`,
+    `MA STACK ${chk(gs.p1_pass)}`,
+    `RSI MOMENTUM ${chk(gs.p2_pass)}`,
+    `RSI LEVEL ${chk(gs.p3_pass)}`,
+    `VOLUME ${chk(gs.p4_pass)}`,
   ].join(' · ');
 
   const gatesCell = `<div class="gate-dots" title="${tip}">` +
@@ -445,9 +446,10 @@ function buildPairRowHtml(p, promotedEntry) {
     `<span class="gate-dot" style="background:${hColor(gs.adx_pass)}"></span>` +
     `<span class="gate-dot" style="background:${hColor(gs.depth_pass)}"></span>` +
     `<span class="gate-sep"></span>` +
-    `<span class="gate-dot" style="background:${sColor(gs.ma_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${rsColor}"></span>` +
-    `<span class="gate-dot" style="background:${sColor(gs.vol_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${sColor(gs.p1_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${sColor(gs.p2_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${sColor(gs.p3_pass)}"></span>` +
+    `<span class="gate-dot" style="background:${sColor(gs.p4_pass)}"></span>` +
     `</div>`;
 
   return `<tr data-symbol="${p.symbol}">
