@@ -60,10 +60,10 @@ _universe_state: dict = {
 
 logger.info(
     "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_MIN=%s | DEPTH=%s%%"
-    " | J_GATE=removed_display_only"
+    " | J_GATE=removed_display_only | SCORING=3of4_real_criteria"
     " | TIMEFRAME=1h_signal/5m_entry | SL=%.1f%%_FIXED | COOLDOWN=%smin"
     " | CIRCUIT_BREAKER=%s_losses | TRAILING_TP=%.2f%%"
-    " | LEVERAGE=%sx(7/7+ADX60)/%sx(6/7+ADX50)/%sx(default) | PAPER=%s",
+    " | LEVERAGE=%sx(4/4+ADX60)/%sx(3/4+ADX50)/%sx(default) | PAPER=%s",
     ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN, DEPTH_GATE_PCT,
     SL_PCT * 100, COOLDOWN_SECONDS // 60,
     CONSECUTIVE_LOSS_STOP, TRAILING_TP_PCT * 100,
@@ -353,16 +353,16 @@ def calc_sl_tp(entry_price: float, direction: str, symbol: str = "?") -> dict:
 # ── Dynamic leverage ──────────────────────────────────────────────────────────
 
 def get_dynamic_leverage(adx: float, score: int) -> int:
-    if adx >= 60 and score == 7:
+    if adx >= 60 and score == 4:
         lev  = LEVERAGE_TIER_HIGH
         tier = "HIGH"
-    elif adx >= 50 and score >= 6:
+    elif adx >= 50 and score >= 3:
         lev  = LEVERAGE_TIER_MID
         tier = "MID"
     else:
         lev  = LEVERAGE_TIER_LOW
         tier = "LOW"
-    logger.info("[LEVERAGE] adx=%.1f score=%d/7 tier=%s leverage=%dx", adx, score, tier, lev)
+    logger.info("[LEVERAGE] adx=%.1f score=%d/4 tier=%s leverage=%dx", adx, score, tier, lev)
     return lev
 
 
@@ -494,33 +494,31 @@ def score_tc_long(
 
     is_cap = adx_1h >= 50
 
-    score = 2  # P1 + P2 (free — guaranteed by gates passing)
-    p3 = int(ma10 > ma30 > ma60)
+    p1 = int(ma10 > ma30 > ma60)
 
-    # P4 — tier-aware RSI (all 1h)
+    # P2 — tier-aware RSI momentum (all 1h)
     if is_cap:
-        p4 = int(rsi_1h > 60 and rsi_1h < rsi_1h_prev)   # momentum pullback
+        p2 = int(rsi_1h > 60 and rsi_1h < rsi_1h_prev)   # momentum pullback
     else:
-        p4 = int(rsi_1h < 40 and rsi_1h > rsi_1h_prev)   # oversold bounce
+        p2 = int(rsi_1h < 40 and rsi_1h > rsi_1h_prev)   # oversold bounce
 
-    p5 = int(rsi_1h > 50)
-    p6 = int(vol_ma10 > 0 and last_vol > (1.2 if is_cap else 1.5) * vol_ma10)
+    p3 = int(rsi_1h > 50)
+    p4 = int(vol_ma10 > 0 and last_vol > (1.2 if is_cap else 1.5) * vol_ma10)
 
-    score += p3 + p4 + p5 + p6
-    score += 1  # P7 free
+    score = p1 + p2 + p3 + p4
 
     if score < TC_MIN_SCORE:
         reasons = []
-        if not p3: reasons.append("P3 ma not aligned bull")
-        if not p4: reasons.append(
-            f"P4 rsi_1h not falling from overbought ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})" if is_cap
-            else f"P4 rsi_1h not rising from oversold ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})"
+        if not p1: reasons.append("P1 ma not aligned bull")
+        if not p2: reasons.append(
+            f"P2 rsi_1h momentum not confirmed ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})" if is_cap
+            else f"P2 rsi_1h not rising from oversold ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})"
         )
-        if not p5: reasons.append("P5 rsi_1h below 50")
-        if not p6: reasons.append("P6 volume not spiking")
+        if not p3: reasons.append("P3 rsi_1h below 50")
+        if not p4: reasons.append("P4 volume not spiking")
         logger.info(
-            "[SCORE DETAIL] %s LONG gates=PASS score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
-            symbol, score, p3, p4, p5, p6, " ".join(reasons),
+            "[SCORE DETAIL] %s LONG gates=PASS score=%d/4 P1=%d P2=%d P3=%d P4=%d reason=%s",
+            symbol, score, p1, p2, p3, p4, " ".join(reasons),
         )
 
     return score
@@ -550,42 +548,41 @@ def score_tc_short(
 
     is_cap = adx_1h >= 50
     tier = "CAPITULATION" if is_cap else "STANDARD"
-    score = 2  # P1 + P2 free
-    p3 = int(ma10 < ma30 < ma60)
 
-    # P4 — tier-aware RSI (all 1h)
+    p1 = int(ma10 < ma30 < ma60)
+
+    # P2 — tier-aware RSI momentum (all 1h)
     if is_cap:
-        p4 = int(rsi_1h < 40 and rsi_1h > rsi_1h_prev)   # exhaustion bounce
+        p2 = int(rsi_1h < 40 and rsi_1h > rsi_1h_prev)   # exhaustion bounce
     else:
-        p4 = int(rsi_1h > 60 and rsi_1h < rsi_1h_prev)   # declining from overbought
+        p2 = int(rsi_1h > 60 and rsi_1h < rsi_1h_prev)   # declining from overbought
 
-    p5 = int(rsi_1h < 50)
-    p6 = int(vol_ma10 > 0 and last_vol > (1.2 if is_cap else 1.5) * vol_ma10)
+    p3 = int(rsi_1h < 50)
+    p4 = int(vol_ma10 > 0 and last_vol > (1.2 if is_cap else 1.5) * vol_ma10)
 
-    score += p3 + p4 + p5 + p6
-    score += 1  # P7 free
+    score = p1 + p2 + p3 + p4
 
     vol_ratio = (last_vol / vol_ma10) if vol_ma10 > 0 else 0.0
     logger.info(
-        "[TIER] %s SHORT tier=%s P4=%d rsi_1h=%.2f rsi_1h_prev=%.2f"
-        " P6=%d vol=%.2fx MA10 threshold=%s",
-        symbol, tier, p4, rsi_1h, rsi_1h_prev, p6, vol_ratio,
+        "[TIER] %s SHORT tier=%s P2=%d rsi_1h=%.2f rsi_1h_prev=%.2f"
+        " P4=%d vol=%.2fx MA10 threshold=%s",
+        symbol, tier, p2, rsi_1h, rsi_1h_prev, p4, vol_ratio,
         "1.2x" if is_cap else "1.5x",
     )
 
     if score < TC_MIN_SCORE:
         reasons = []
-        if not p3: reasons.append("P3 ma not aligned bear")
-        if not p4: reasons.append(
-            f"P4 rsi_1h not rising from oversold ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})" if is_cap
-            else f"P4 rsi_1h not falling from overbought ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})"
+        if not p1: reasons.append("P1 ma not aligned bear")
+        if not p2: reasons.append(
+            f"P2 rsi_1h momentum not confirmed ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})" if is_cap
+            else f"P2 rsi_1h not falling from overbought ({rsi_1h:.1f} prev={rsi_1h_prev:.1f})"
         )
-        if not p5: reasons.append("P5 rsi_1h above 50")
-        if not p6: reasons.append("P6 volume not spiking")
+        if not p3: reasons.append("P3 rsi_1h above 50")
+        if not p4: reasons.append("P4 volume not spiking")
         logger.info(
-            "[SCORE DETAIL] %s SHORT gates=PASS tier=%s score=%d/7"
-            " P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
-            symbol, tier, score, p3, p4, p5, p6, " ".join(reasons),
+            "[SCORE DETAIL] %s SHORT gates=PASS tier=%s score=%d/4"
+            " P1=%d P2=%d P3=%d P4=%d reason=%s",
+            symbol, tier, score, p1, p2, p3, p4, " ".join(reasons),
         )
 
     return score
