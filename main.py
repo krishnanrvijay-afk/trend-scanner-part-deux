@@ -361,6 +361,11 @@ async def _do_open_trade(
         f"tp1={trade.get('tp1_price', 0):.6f} tp2={trade.get('tp2_price', 0):.6f} "
         f"dollar_risk=${dollar_risk_usd:.2f} leverage={leverage}x"
     )
+    print(
+        f"[TRADE OPEN] {symbol} {direction} score={alert_data.get('score') if alert_data else 'N/A'}"
+        f" adx={alert_data.get('adx') if alert_data else 'N/A'}"
+        f" leverage={leverage}x entry={entry}"
+    )
 
     for a in app_state.alerts:
         if a["symbol"] == symbol and a["direction"] == direction:
