@@ -1,6 +1,7 @@
 import logging
 import time
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional
 import numpy as np
 import pandas as pd
@@ -8,10 +9,12 @@ import pandas as pd
 from config import (
     PAIRS, TC_ADX_MIN, DEPTH_GATE_PCT, PAIR_ADX_OVERRIDES,
     SL_PCT, TP1_R_MULTIPLIER, TP2_R_MULTIPLIER,
-    LEVERAGE_TIER_HIGH, LEVERAGE_TIER_MID, LEVERAGE_TIER_LOW,
+    LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
     COOLDOWN_SECONDS, CONSECUTIVE_LOSS_STOP,
-    DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE,
+    MARGIN_PER_TRADE,
     PAPER_MODE,
+    SESSION_FILTER_ENABLED, SESSION_WINDOWS,
+    BTC_REGIME_FILTER_ENABLED,
 )
 from hl_client import HLClient
 
@@ -22,20 +25,64 @@ _last_result:  dict[str, bool]  = {}   # key → last scan result (True/False)
 _pending:      dict[str, dict]  = {}   # PENDING (first scan passed)
 _confirmed_at: dict[str, float] = {}   # key → timestamp of ALERT confirmation
 _cooldowns:    dict[str, float] = {}   # key → expiry timestamp
+_btc_regime:   str              = "Neutral"  # updated each BTC scan
 
 CONFIRMED_SHOW_SECONDS = 30  # show ALERT state in signal column for this long
 
 _overrides_str = " ".join(f"{k}:{v}" for k, v in PAIR_ADX_OVERRIDES.items()) or "none"
 logger.info(
-    "[CONFIG] ADX=%d DEPTH=%d%% SL=%.1f%% TP1=%.1f%% TP2=%.1f%%"
-    " COOLDOWN=%dmin CIRCUIT=%d LEVERAGE=%dx/%dx/%dx PAPER=%s CONDITIONS=4 NO_SCORING"
-    " ADX_OVERRIDES=%s",
-    TC_ADX_MIN, DEPTH_GATE_PCT,
-    SL_PCT * 100, SL_PCT * TP1_R_MULTIPLIER * 100, SL_PCT * TP2_R_MULTIPLIER * 100,
-    COOLDOWN_SECONDS // 60, CONSECUTIVE_LOSS_STOP,
-    LEVERAGE_TIER_HIGH, LEVERAGE_TIER_MID, LEVERAGE_TIER_LOW, PAPER_MODE,
-    _overrides_str,
+    "[CONFIG] MARGIN=%d | MAX_TRADES=2 | SL=3%% | TRAILING=0.25%% | COOLDOWN=60min"
+    " | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=%dx/%dx/%dx"
+    " | SESSION=EU+US | BTC_REGIME=on"
+    " | CONDITIONS=4 NO_SCORING | ADX_OVERRIDES=%s | PAPER=%s",
+    MARGIN_PER_TRADE,
+    LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
+    _overrides_str, PAPER_MODE,
 )
+
+
+# ── Session filter ─────────────────────────────────────────────────────────────
+
+def is_trading_session() -> bool:
+    """Return True if current UTC time falls within any configured SESSION_WINDOWS."""
+    now_utc = datetime.now(timezone.utc)
+    now_hm  = (now_utc.hour, now_utc.minute)
+    for start_str, end_str in SESSION_WINDOWS:
+        sh, sm = int(start_str[:2]), int(start_str[3:])
+        eh, em = int(end_str[:2]),   int(end_str[3:])
+        if (sh, sm) <= now_hm < (eh, em):
+            return True
+    return False
+
+
+def get_session_label() -> str:
+    """Return a display label for the current session state."""
+    now_utc = datetime.now(timezone.utc)
+    now_hm  = (now_utc.hour, now_utc.minute)
+    in_eu   = False
+    in_us   = False
+    for i, (start_str, end_str) in enumerate(SESSION_WINDOWS):
+        sh, sm = int(start_str[:2]), int(start_str[3:])
+        eh, em = int(end_str[:2]),   int(end_str[3:])
+        inside = (sh, sm) <= now_hm < (eh, em)
+        if i == 0:
+            in_eu = inside
+        elif i == 1:
+            in_us = inside
+    if in_eu and in_us:
+        return "EU+US"
+    elif in_eu:
+        return "EU SESSION"
+    elif in_us:
+        return "US SESSION"
+    return "CLOSED"
+
+
+# ── BTC regime ────────────────────────────────────────────────────────────────
+
+def get_btc_regime() -> str:
+    """Return latest BTC trend regime — updated each time BTC is scanned."""
+    return _btc_regime
 
 
 # ── Cooldown helpers ──────────────────────────────────────────────────────────
@@ -359,22 +406,27 @@ def calc_sl_tp(entry_price: float, direction: str, symbol: str = "?") -> dict:
     }
 
 
-# ── Dynamic leverage (ADX-based, no score) ────────────────────────────────────
+# ── Dynamic leverage (ADX-based) ──────────────────────────────────────────────
 
-def get_dynamic_leverage(adx: float) -> int:
+def get_dynamic_leverage(adx: float, symbol: str = "?", direction: str = "?") -> int:
     if adx >= 60:
-        lev, tier = LEVERAGE_TIER_HIGH, "HIGH"
+        lev, tier = LEVERAGE_TIER3, 3
     elif adx >= 50:
-        lev, tier = LEVERAGE_TIER_MID, "MID"
+        lev, tier = LEVERAGE_TIER2, 2
     else:
-        lev, tier = LEVERAGE_TIER_LOW, "LOW"
-    logger.info("[LEVERAGE] adx=%.1f tier=%s leverage=%dx", adx, tier, lev)
+        lev, tier = LEVERAGE_TIER1, 1
+    logger.info(
+        "[LEVERAGE] %s %s adx=%.1f tier=%d leverage=%dx",
+        symbol, direction, adx, tier, lev,
+    )
     return lev
 
 
 # ── Per-pair scan ─────────────────────────────────────────────────────────────
 
 async def scan_pair(symbol: str, client: HLClient) -> dict:
+    global _btc_regime
+
     try:
         candles_1h_raw, orderbook, price = await asyncio.gather(
             client.get_candles(symbol, "1h", 80),
@@ -402,6 +454,11 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
 
     vol_ratio   = round(last_vol / vol_ma10, 2) if vol_ma10 > 0 else 0.0
     j1h_clamped = round(max(0.0, min(100.0, j1h)), 1)
+
+    # Update BTC regime for use by subsequent pair scans
+    if symbol == "BTC":
+        _btc_regime = trend
+        logger.info("[REGIME] BTC trend updated: %s", _btc_regime)
 
     # Per-pair ADX floor override
     adx_min = PAIR_ADX_OVERRIDES.get(symbol, TC_ADX_MIN)
@@ -431,12 +488,37 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         last = _last_result.get(key, False)
 
         if signal and not _in_cooldown(key):
+            # ── BTC regime filter ─────────────────────────────────────────────
+            if BTC_REGIME_FILTER_ENABLED and symbol != "BTC":
+                regime = _btc_regime
+                if regime == "Neutral":
+                    logger.info(
+                        "[REGIME] BTC=Neutral blocking %s %s signal", symbol, direction
+                    )
+                    _last_result[key] = False
+                    _pending.pop(key, None)
+                    continue
+                if regime == "Strong Bear" and direction == "LONG":
+                    logger.info(
+                        "[REGIME] BTC=StrongBear blocking %s LONG signal", symbol
+                    )
+                    _last_result[key] = False
+                    _pending.pop(key, None)
+                    continue
+                if regime == "Strong Bull" and direction == "SHORT":
+                    logger.info(
+                        "[REGIME] BTC=StrongBull blocking %s SHORT signal", symbol
+                    )
+                    _last_result[key] = False
+                    _pending.pop(key, None)
+                    continue
+
             if last:
                 # Second consecutive scan — fire confirmed alert
                 _pending.pop(key, None)
-                lev         = get_dynamic_leverage(adx_1h)
+                lev         = get_dynamic_leverage(adx_1h, symbol, direction)
                 sl_tp       = calc_sl_tp(price, direction, symbol)
-                dollar_risk = round(DEFAULT_MARGIN_USDC * lev * SL_PCT, 2)
+                dollar_risk = round(MARGIN_PER_TRADE * lev * SL_PCT, 2)
                 alert_data  = {
                     "symbol":       symbol,
                     "direction":    direction,
@@ -446,7 +528,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "j1h":          j1h_clamped,
                     "volume_ratio": vol_ratio,
                     "entry_price":  price,
-                    "margin":       DEFAULT_MARGIN_USDC,
+                    "margin":       MARGIN_PER_TRADE,
                     "leverage":     lev,
                     "dollar_risk":  dollar_risk,
                     "score":        4,
@@ -498,7 +580,17 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     }
 
 
-async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
+async def run_full_scan(client: HLClient) -> tuple[list[dict] | None, list[dict]]:
+    """Returns (pair_states, new_alerts).
+    pair_states is None when the session filter blocks the scan (caller keeps
+    existing pair_states unchanged).  new_alerts is always an empty list when
+    blocked.
+    """
+    # ── Session filter ────────────────────────────────────────────────────────
+    if SESSION_FILTER_ENABLED and not is_trading_session():
+        logger.info("[SESSION] outside trading hours — scan skipped")
+        return None, []
+
     results = []
     for i, sym in enumerate(PAIRS):
         if i > 0:
