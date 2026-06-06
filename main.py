@@ -674,6 +674,11 @@ async def index(request: Request):
     )
 
 
+@app.get("/research", response_class=HTMLResponse)
+async def research(request: Request):
+    return templates.TemplateResponse(request, "pair_research_dashboard.html", {})
+
+
 @app.get("/api/state")
 async def get_state():
     return app_state.serialise()
