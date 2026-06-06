@@ -721,6 +721,18 @@
       background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.3);
       color:#ffaa00;font-size:10px;font-weight:600;letter-spacing:.04em
     "></span>
+    <span id="daily-limit-badge" style="
+      display:none;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;
+      background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.45);
+      color:#ff4444;font-size:11px;font-weight:700;letter-spacing:.06em;
+      animation:pending-pulse 1.2s infinite
+    ">🚫 DAILY LIMIT HIT</span>
+    <button id="reset-day-btn" onclick="resetDay()" style="
+      display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:4px;
+      background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.35);
+      color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.06em;
+      cursor:pointer;font-family:var(--font)
+    ">↺ RESET DAY</button>
   </div>
   <!-- Dual info cards -->
   <div class="header-cards">
@@ -739,6 +751,21 @@
       <div class="hc-item">
         <span class="hc-label">TRADES</span>
         <span class="hc-val" id="hc-trades">0 opened</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label">SLOTS</span>
+        <span class="hc-val" id="hc-slots" style="color:#00ff88">0/2</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label">DAY P&amp;L</span>
+        <span class="hc-val" id="hc-daily-pnl" style="color:#888">—</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label">SESSION</span>
+        <span class="hc-val" id="hc-session" style="color:#888">—</span>
       </div>
       <span class="hc-sep"></span>
       <div class="hc-item">
@@ -761,6 +788,11 @@
       <div class="hc-item">
         <span class="hc-label">TREND</span>
         <span class="hc-val" id="hc-trend-val">—</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label">BTC</span>
+        <span class="hc-val" id="hc-btc-regime" style="color:#888">—</span>
       </div>
       <span class="hc-sep"></span>
       <div class="hc-item">
