@@ -28,6 +28,6 @@ LEVERAGE_TIER_LOW  = 6
 
 UNIVERSE_SCAN_ENABLED = False
 
-PAIR_ADX_OVERRIDES = {"NEAR": 42}
+PAIR_ADX_OVERRIDES = {"NEAR": 42, "SUI": 40}
 
 HL_API_URL = "https://api.hyperliquid.xyz/info"
