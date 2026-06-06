@@ -141,6 +141,19 @@ async function resetCircuitBreaker() {
   }
 }
 
+async function resetDay() {
+  try {
+    const res = await fetch('/api/reset-day', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.detail || 'Reset failed'); return; }
+    await fetchState();
+    renderAll();
+    showToast('Day reset — daily P&L and halt cleared.');
+  } catch (e) {
+    showToast('Network error: ' + e.message);
+  }
+}
+
 async function closeTrade(symbol, direction) {
   try {
     const res = await fetch('/api/trade/close', {
@@ -274,6 +287,59 @@ function renderHeader() {
 
   const sigEl = document.getElementById('hc-signals');
   if (sigEl) sigEl.textContent = (state.alerts || []).length;
+
+  // ── Slots display ─────────────────────────────────────────────
+  const acct = state.account || {};
+  const slotsUsed  = acct.slots_used  ?? 0;
+  const maxSlots   = acct.max_slots   ?? 2;
+  const slotsEl    = document.getElementById('hc-slots');
+  if (slotsEl) {
+    const slotsColor = slotsUsed >= maxSlots ? '#ff4444' : slotsUsed > 0 ? '#ffaa00' : '#00ff88';
+    slotsEl.textContent = `${slotsUsed}/${maxSlots}`;
+    slotsEl.style.color = slotsColor;
+  }
+
+  // ── Daily P&L display ─────────────────────────────────────────
+  const daily      = state.daily || {};
+  const dailyPnl   = daily.pnl   ?? null;
+  const dailyHalted = daily.halted ?? false;
+  const pnlEl      = document.getElementById('hc-daily-pnl');
+  if (pnlEl && dailyPnl !== null) {
+    const pnlColor = dailyPnl >= 0 ? '#00ff88' : '#ff4444';
+    const pnlSign  = dailyPnl >= 0 ? '+' : '';
+    pnlEl.textContent = `${pnlSign}$${fmt(dailyPnl, 2)}`;
+    pnlEl.style.color = pnlColor;
+  }
+
+  // ── Session status display ────────────────────────────────────
+  const sessionLabel = state.session_label || 'CLOSED';
+  const sessionEl    = document.getElementById('hc-session');
+  if (sessionEl) {
+    const sessionColor = sessionLabel === 'CLOSED' ? '#444444'
+      : sessionLabel === 'EU+US'      ? '#00ff88'
+      : '#ffaa00';
+    sessionEl.textContent = sessionLabel;
+    sessionEl.style.color = sessionColor;
+  }
+
+  // ── BTC regime display (right card) ──────────────────────────
+  const btcRegime = state.btc_regime || 'Neutral';
+  const btcEl     = document.getElementById('hc-btc-regime');
+  if (btcEl) {
+    const btcColor = btcRegime === 'Strong Bull' ? '#00ff88'
+      : btcRegime === 'Strong Bear' ? '#ff4444' : '#ffaa00';
+    const btcLabel = btcRegime === 'Strong Bull' ? 'BULL'
+      : btcRegime === 'Strong Bear' ? 'BEAR' : 'NEUTRAL';
+    btcEl.textContent = btcLabel;
+    btcEl.style.color = btcColor;
+  }
+
+  // ── Daily limit banner & reset button ────────────────────────
+  const dlBadgeEl = document.getElementById('daily-limit-badge');
+  if (dlBadgeEl) dlBadgeEl.style.display = dailyHalted ? 'inline-flex' : 'none';
+
+  const rdBtnEl = document.getElementById('reset-day-btn');
+  if (rdBtnEl) rdBtnEl.style.display = dailyHalted ? 'inline-flex' : 'none';
 
   // ── Circuit breaker display ───────────────────────────────────
   const cb = state.circuit_breaker || {};
@@ -678,10 +744,13 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
   html += `<div class="ac-footer"><span class="ac-elapsed">Fired ${relTime(alert.fired_at)}</span>`;
   if (!inTrade) {
     const autoInfo = (state.auto_pending || {})[key];
+    const slotsFull = (state.account || {}).slots_full || false;
     if (autoInfo) {
       const remaining = Math.max(0, Math.ceil(autoInfo.fire_at - Date.now() / 1000));
       const label = remaining > 0 ? `AUTO IN ${remaining}s` : 'OPENING…';
       html += `<button class="pill pill-open" style="background:#ffaa00;color:#000;cursor:default;min-width:100px" data-auto-key="${key}">${label}</button>`;
+    } else if (slotsFull) {
+      html += `<button class="pill" style="background:rgba(100,100,100,0.15);border:1px solid #444;color:#666;cursor:not-allowed;min-width:100px" disabled title="Max simultaneous trades reached">⛔ SLOTS FULL</button>`;
     } else {
       const disabled = capReached ? 'disabled title="Margin cap reached"' : '';
       html += `<button class="pill pill-open" ${disabled} onclick="openTrade('${alert.symbol}', '${alert.direction}')">▶ OPEN TRADE</button>`;
