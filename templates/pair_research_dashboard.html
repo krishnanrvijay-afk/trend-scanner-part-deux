@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>HL Pair Research Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --bg:#080808;
+  --surface:#0f0f0f;
+  --surface2:#141414;
+  --surface3:#1a1a1a;
+  --border:#222222;
+  --border2:#2a2a2a;
+  --text:#e2e8f0;
+  --muted:#555566;
+  --green:#00ff88;
+  --amber:#ffaa00;
+  --red:#ff4444;
+  --blue:#3b82f6;
+  --font-head:'Bebas Neue',sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+}
+
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-mono);
+  font-size:13px;
+  min-height:100vh;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.header{
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  padding:16px 24px;
+  display:flex;
+  align-items:center;
+  gap:20px;
+  position:sticky;
+  top:0;
+  z-index:100;
+}
+.header-title{
+  font-family:var(--font-head);
+  font-size:26px;
+  letter-spacing:.12em;
+  color:#ffffff;
+  white-space:nowrap;
+}
+.header-sub{
+  font-size:10px;
+  color:var(--muted);
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.load-status{
+  margin-left:auto;
+  font-size:10px;
+  color:var(--muted);
+  letter-spacing:.04em;
+}
+.refresh-btn{
+  padding:6px 16px;
+  border-radius:5px;
+  background:rgba(0,255,136,.08);
+  border:1px solid rgba(0,255,136,.25);
+  color:var(--green);
+  font-family:var(--font-mono);
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.08em;
+  cursor:pointer;
+  transition:background .15s;
+}
+.refresh-btn:hover{background:rgba(0,255,136,.18)}
+
+/* ── Tab bar ─────────────────────────────────────────────────────────────── */
+.tab-bar{
+  display:flex;
+  background:var(--surface);
+  border-bottom:2px solid var(--border);
+  padding:0 20px;
+  gap:0;
+}
+.tab-btn{
+  padding:11px 20px;
+  background:none;
+  border:none;
+  border-bottom:2px solid transparent;
+  color:var(--muted);
+  font-family:var(--font-head);
+  font-size:17px;
+  letter-spacing:.12em;
+  cursor:pointer;
+  margin-bottom:-2px;
+  transition:color .15s;
+  white-space:nowrap;
+}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:#ffffff;border-bottom-color:var(--green)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+
+/* ── Loading / error states ──────────────────────────────────────────────── */
+.no-data{
+  padding:80px 24px;
+  text-align:center;
+  color:var(--muted);
+  font-size:12px;
+  line-height:2;
+}
+.no-data-title{
+  font-family:var(--font-head);
+  font-size:28px;
+  color:#222;
+  letter-spacing:.1em;
+  margin-bottom:12px;
+}
+
+/* ── Main data table ─────────────────────────────────────────────────────── */
+.table-wrap{overflow-x:auto;padding:0 0 20px}
+.data-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:11.5px;
+}
+.data-table thead th{
+  background:var(--surface2);
+  padding:9px 12px;
+  text-align:left;
+  font-family:var(--font-head);
+  font-size:14px;
+  letter-spacing:.1em;
+  color:#888;
+  border-bottom:1px solid var(--border);
+  white-space:nowrap;
+  position:sticky;
+  top:68px;
+  z-index:10;
+}
+.data-table thead th:not(:first-child){text-align:right}
+.data-table tbody tr{
+  border-bottom:1px solid var(--border);
+  cursor:pointer;
+  transition:background .1s;
+}
+.data-table tbody tr:hover{background:var(--surface2)}
+.data-table tbody tr.expanded{background:var(--surface2)}
+.data-table td{
+  padding:10px 12px;
+  white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+.data-table td:not(:first-child){text-align:right}
+.sym-cell{
+  font-family:var(--font-head);
+  font-size:16px;
+  letter-spacing:.06em;
+  color:#ffffff;
+}
+.expand-icon{
+  font-size:9px;
+  color:var(--muted);
+  margin-left:6px;
+  transition:transform .2s;
+}
+.expanded .expand-icon{transform:rotate(90deg)}
+
+/* ── Detail panel (expanded row) ─────────────────────────────────────────── */
+.detail-row{display:none}
+.detail-row.open{display:table-row}
+.detail-cell{
+  padding:0 !important;
+  border-bottom:2px solid var(--border) !important;
+}
+.detail-panel{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:1px;
+  background:var(--border);
+}
+.tf-card{
+  background:var(--surface3);
+  padding:14px 16px;
+}
+.tf-label{
+  font-family:var(--font-head);
+  font-size:20px;
+  letter-spacing:.12em;
+  color:var(--amber);
+  margin-bottom:10px;
+}
+.tf-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:3px 0;
+  border-bottom:1px solid #1a1a1a;
+  gap:8px;
+}
+.tf-row:last-child{border-bottom:none}
+.tf-key{
+  font-size:9px;
+  color:#555;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  white-space:nowrap;
+}
+.tf-val{
+  font-size:11px;
+  font-weight:600;
+  font-variant-numeric:tabular-nums;
+}
+
+/* ── ADX color helpers ───────────────────────────────────────────────────── */
+.adx-strong{color:var(--green);font-weight:700}
+.adx-mod   {color:var(--amber);font-weight:700}
+.adx-weak  {color:var(--red)}
+.trend-bull{color:var(--green);font-weight:700}
+.trend-bear{color:var(--red);font-weight:700}
+.trend-neu {color:#555}
+
+/* ── Overview grid ───────────────────────────────────────────────────────── */
+.overview-grid{
+  display:flex;
+  flex-wrap:wrap;
+  gap:14px;
+  padding:20px 24px;
+}
+.pair-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:16px 18px;
+  width:220px;
+  flex-shrink:0;
+  cursor:pointer;
+  transition:border-color .15s,background .15s;
+}
+.pair-card:hover{background:var(--surface2);border-color:var(--border2)}
+.pc-sym{
+  font-family:var(--font-head);
+  font-size:24px;
+  letter-spacing:.08em;
+  color:#ffffff;
+  margin-bottom:4px;
+}
+.pc-price{
+  font-size:11px;
+  color:#888;
+  margin-bottom:10px;
+  font-variant-numeric:tabular-nums;
+}
+.pc-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:10px;
+  padding:2px 0;
+}
+.pc-label{color:#444;text-transform:uppercase;letter-spacing:.06em}
+.pc-score-bar{
+  display:flex;
+  gap:2px;
+  margin-top:10px;
+}
+.pc-score-pip{
+  flex:1;
+  height:4px;
+  border-radius:2px;
+  background:#1a1a1a;
+}
+.pc-score-pip.filled{background:var(--green)}
+
+/* ── Scanner readiness table ─────────────────────────────────────────────── */
+.score-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:28px;
+  height:28px;
+  border-radius:5px;
+  font-family:var(--font-head);
+  font-size:18px;
+  font-weight:700;
+  letter-spacing:.04em;
+}
+.score-high{background:rgba(0,255,136,.15);color:var(--green);border:1px solid rgba(0,255,136,.3)}
+.score-med {background:rgba(255,170,0,.12);color:var(--amber);border:1px solid rgba(255,170,0,.3)}
+.score-low {background:rgba(255,68,68,.1);color:var(--red);border:1px solid rgba(255,68,68,.25)}
+
+.rank-bar{
+  display:flex;
+  gap:2px;
+  align-items:center;
+}
+.rank-pip{
+  width:14px;
+  height:8px;
+  border-radius:2px;
+  background:#1a1a1a;
+}
+.rank-pip.on{background:var(--green)}
+.rank-pip.on.med{background:var(--amber)}
+.rank-pip.on.low{background:var(--red)}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#222;border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header class="header">
+  <div>
+    <div class="header-title">HL PAIR RESEARCH</div>
+    <div class="header-sub">Hyperliquid · 12 Pairs · 4 Timeframes</div>
+  </div>
+  <div class="load-status" id="load-status">Loading data…</div>
+  <button class="refresh-btn" onclick="loadData()">↺ REFRESH</button>
+</header>
+
+<!-- ── Tab bar ── -->
+<div class="tab-bar">
+  <button class="tab-btn active" id="tbtn-5m"        onclick="switchTab('5m')">5M</button>
+  <button class="tab-btn"        id="tbtn-1h"        onclick="switchTab('1h')">1H</button>
+  <button class="tab-btn"        id="tbtn-4h"        onclick="switchTab('4h')">4H</button>
+  <button class="tab-btn"        id="tbtn-1d"        onclick="switchTab('1d')">1D</button>
+  <button class="tab-btn"        id="tbtn-overview"  onclick="switchTab('overview')">OVERVIEW</button>
+  <button class="tab-btn"        id="tbtn-readiness" onclick="switchTab('readiness')">SCANNER READINESS</button>
+</div>
+
+<!-- ── Tabs ── -->
+<div id="tab-5m"        class="tab-content active"><div id="tbl-5m"></div></div>
+<div id="tab-1h"        class="tab-content"><div id="tbl-1h"></div></div>
+<div id="tab-4h"        class="tab-content"><div id="tbl-4h"></div></div>
+<div id="tab-1d"        class="tab-content"><div id="tbl-1d"></div></div>
+<div id="tab-overview"  class="tab-content"><div id="overview-content"></div></div>
+<div id="tab-readiness" class="tab-content"><div id="readiness-content"></div></div>
+
+<script>
+let DATA = null;
+const PAIRS = ["BTC","ETH","SOL","XRP","DOGE","SUI","NEAR","OP","APT","LINK","ZEC","ARB"];
+const TFS   = ["5m","1h","4h","1d"];
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function fmt(n, dec=2) {
+  if (n == null || isNaN(n)) return '—';
+  return Number(n).toLocaleString('en-US', {
+    minimumFractionDigits: dec, maximumFractionDigits: dec
+  });
+}
+
+function fmtPrice(n) {
+  if (n == null || isNaN(n)) return '—';
+  const v = Number(n);
+  if (v >= 1000) return fmt(v, 2);
+  if (v >= 1)    return fmt(v, 4);
+  return fmt(v, 6);
+}
+
+function adxClass(v) {
+  if (v == null) return '';
+  return v >= 50 ? 'adx-strong' : v >= 25 ? 'adx-mod' : 'adx-weak';
+}
+
+function adxHtml(v) {
+  const cls = adxClass(v);
+  return `<span class="${cls}">${fmt(v,1)}</span>`;
+}
+
+function trendHtml(t) {
+  if (!t) return '<span class="trend-neu">—</span>';
+  if (t === 'Strong Bull') return '<span class="trend-bull">▲ S.BULL</span>';
+  if (t === 'Strong Bear') return '<span class="trend-bear">▼ S.BEAR</span>';
+  return '<span class="trend-neu">— NEU</span>';
+}
+
+function pctHtml(v, threshHigh=50, threshMed=25) {
+  if (v == null) return '—';
+  const color = v >= threshHigh ? 'var(--green)' : v >= threshMed ? 'var(--amber)' : 'var(--red)';
+  return `<span style="color:${color}">${fmt(v,1)}%</span>`;
+}
+
+function scoreClass(n) {
+  return n >= 5 ? 'score-high' : n >= 3 ? 'score-med' : 'score-low';
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+
+function switchTab(id) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById(`tbtn-${id}`);
+  if (btn) btn.classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  const tab = document.getElementById(`tab-${id}`);
+  if (tab) tab.classList.add('active');
+}
+
+// ── Auto-fetch data ───────────────────────────────────────────────────────────
+
+async function loadData() {
+  const statusEl = document.getElementById('load-status');
+  statusEl.textContent = 'Loading…';
+  statusEl.style.color = 'var(--muted)';
+  try {
+    const res = await fetch('/static/pair_research.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    DATA = await res.json();
+    const pairs = Object.keys(DATA).length;
+    const now   = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    statusEl.textContent = `${pairs} pairs · updated ${now}`;
+    statusEl.style.color = 'var(--green)';
+    renderAll();
+  } catch(err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    statusEl.style.color = 'var(--red)';
+    TFS.forEach(tf => { document.getElementById(`tbl-${tf}`).innerHTML = errorHtml(err.message); });
+    document.getElementById('overview-content').innerHTML  = errorHtml(err.message);
+    document.getElementById('readiness-content').innerHTML = errorHtml(err.message);
+  }
+}
+
+// ── Render all ────────────────────────────────────────────────────────────────
+
+function renderAll() {
+  TFS.forEach(tf => renderTimeframeTable(tf));
+  renderOverview();
+  renderReadiness();
+}
+
+// ── Timeframe table ───────────────────────────────────────────────────────────
+
+function renderTimeframeTable(tf) {
+  const container = document.getElementById(`tbl-${tf}`);
+  if (!DATA) { container.innerHTML = noDataHtml(); return; }
+
+  let html = `<div class="table-wrap"><table class="data-table"><thead><tr>
+    <th>SYMBOL</th>
+    <th>TREND</th>
+    <th>PRICE</th>
+    <th>ADX NOW</th>
+    <th>ADX AVG</th>
+    <th>ADX &gt;25%</th>
+    <th>ADX &gt;50%</th>
+    <th>AVG RANGE</th>
+    <th>MAX RANGE</th>
+    <th>VOL AVG</th>
+    <th>BULL%</th>
+    <th>BEAR%</th>
+  </tr></thead><tbody>`;
+
+  for (const sym of PAIRS) {
+    const d = DATA[sym];
+    if (!d) continue;
+    const s = d[tf] || {};
+    html += `
+    <tr id="row-${tf}-${sym}" onclick="toggleDetail('${tf}','${sym}')">
+      <td class="sym-cell">${sym}<span class="expand-icon" id="icon-${tf}-${sym}">▶</span></td>
+      <td>${trendHtml(s.trend)}</td>
+      <td style="color:#fff;font-weight:600">${fmtPrice(s.current_price)}</td>
+      <td>${adxHtml(s.adx_current)}</td>
+      <td>${adxHtml(s.adx_avg)}</td>
+      <td>${pctHtml(s.adx_pct_above25, 70, 40)}</td>
+      <td>${pctHtml(s.adx_pct_above50, 30, 15)}</td>
+      <td style="color:var(--amber)">${fmt(s.avg_range_pct,3)}%</td>
+      <td style="color:#ff9900">${fmt(s.max_range_pct,3)}%</td>
+      <td style="color:#888">${fmtVol(s.avg_volume)}</td>
+      <td style="color:var(--green)">${fmt(s.bull_pct,1)}%</td>
+      <td style="color:var(--red)">${fmt(s.bear_pct,1)}%</td>
+    </tr>
+    <tr id="det-${tf}-${sym}" class="detail-row">
+      <td class="detail-cell" colspan="12">${buildDetailPanel(sym)}</td>
+    </tr>`;
+  }
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+function fmtVol(v) {
+  if (v == null) return '—';
+  if (v >= 1e9) return fmt(v/1e9,2)+'B';
+  if (v >= 1e6) return fmt(v/1e6,2)+'M';
+  if (v >= 1e3) return fmt(v/1e3,2)+'K';
+  return fmt(v,2);
+}
+
+function toggleDetail(tf, sym) {
+  const detRow  = document.getElementById(`det-${tf}-${sym}`);
+  const mainRow = document.getElementById(`row-${tf}-${sym}`);
+  const icon    = document.getElementById(`icon-${tf}-${sym}`);
+  const isOpen  = detRow.classList.contains('open');
+  detRow.classList.toggle('open', !isOpen);
+  mainRow.classList.toggle('expanded', !isOpen);
+  if (icon) icon.style.transform = isOpen ? '' : 'rotate(90deg)';
+}
+
+function buildDetailPanel(sym) {
+  if (!DATA || !DATA[sym]) return '';
+  let html = '<div class="detail-panel">';
+  for (const tf of TFS) {
+    const s    = (DATA[sym][tf]) || {};
+    const adxC = adxClass(s.adx_current);
+    html += `
+    <div class="tf-card">
+      <div class="tf-label">${tf.toUpperCase()}</div>
+      <div class="tf-row"><span class="tf-key">TREND</span><span class="tf-val">${trendHtml(s.trend)}</span></div>
+      <div class="tf-row"><span class="tf-key">PRICE</span><span class="tf-val" style="color:#fff">${fmtPrice(s.current_price)}</span></div>
+      <div class="tf-row"><span class="tf-key">ADX NOW</span><span class="tf-val ${adxC}">${fmt(s.adx_current,1)}</span></div>
+      <div class="tf-row"><span class="tf-key">ADX AVG</span><span class="tf-val ${adxClass(s.adx_avg)}">${fmt(s.adx_avg,1)}</span></div>
+      <div class="tf-row"><span class="tf-key">ADX &gt;25%</span><span class="tf-val">${pctHtml(s.adx_pct_above25,70,40)}</span></div>
+      <div class="tf-row"><span class="tf-key">ADX &gt;50%</span><span class="tf-val">${pctHtml(s.adx_pct_above50,30,15)}</span></div>
+      <div class="tf-row"><span class="tf-key">AVG RANGE</span><span class="tf-val" style="color:var(--amber)">${fmt(s.avg_range_pct,3)}%</span></div>
+      <div class="tf-row"><span class="tf-key">MAX RANGE</span><span class="tf-val" style="color:#ff9900">${fmt(s.max_range_pct,3)}%</span></div>
+      <div class="tf-row"><span class="tf-key">VOL AVG</span><span class="tf-val" style="color:#888">${fmtVol(s.avg_volume)}</span></div>
+      <div class="tf-row"><span class="tf-key">BULL %</span><span class="tf-val" style="color:var(--green)">${fmt(s.bull_pct,1)}%</span></div>
+      <div class="tf-row"><span class="tf-key">BEAR %</span><span class="tf-val" style="color:var(--red)">${fmt(s.bear_pct,1)}%</span></div>
+      <div class="tf-row"><span class="tf-key">CANDLES</span><span class="tf-val" style="color:#555">${s.candle_count ?? '—'}</span></div>
+    </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// ── Overview grid ─────────────────────────────────────────────────────────────
+
+function renderOverview() {
+  const container = document.getElementById('overview-content');
+  if (!DATA) { container.innerHTML = noDataHtml(); return; }
+
+  let html = '<div class="overview-grid">';
+  for (const sym of PAIRS) {
+    const d = DATA[sym];
+    if (!d) continue;
+    const s1h   = d['1h'] || {};
+    const score = d.score ?? 0;
+
+    const trendCls = s1h.trend === 'Strong Bull' ? 'trend-bull'
+                   : s1h.trend === 'Strong Bear' ? 'trend-bear' : 'trend-neu';
+    let pips = '';
+    for (let i = 0; i < 7; i++) {
+      pips += `<div class="pc-score-pip ${i < score ? 'filled' : ''}"></div>`;
+    }
+    const adxColor = (s1h.adx_current||0) >= 50 ? 'var(--green)'
+                   : (s1h.adx_current||0) >= 25 ? 'var(--amber)' : 'var(--red)';
+
+    html += `
+    <div class="pair-card" onclick="switchTab('1h')">
+      <div class="pc-sym">${sym}</div>
+      <div class="pc-price">${fmtPrice(s1h.current_price)}</div>
+      <div class="pc-row">
+        <span class="pc-label">Trend</span>
+        <span class="${trendCls}" style="font-size:10px;font-weight:700">
+          ${s1h.trend === 'Strong Bull' ? '▲ S.BULL' : s1h.trend === 'Strong Bear' ? '▼ S.BEAR' : '— NEU'}
+        </span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-label">ADX (1h)</span>
+        <span style="color:${adxColor};font-weight:700">${fmt(s1h.adx_current,1)}</span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-label">ADX &gt;25%</span>
+        <span style="color:#888">${fmt(s1h.adx_pct_above25,1)}%</span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-label">Avg Range</span>
+        <span style="color:var(--amber)">${fmt(s1h.avg_range_pct,3)}%</span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-label">Score</span>
+        <span class="${scoreClass(score)}" style="font-family:var(--font-head);font-size:16px">${score}/7</span>
+      </div>
+      <div class="pc-score-bar">${pips}</div>
+    </div>`;
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// ── Scanner readiness ─────────────────────────────────────────────────────────
+
+function renderReadiness() {
+  const container = document.getElementById('readiness-content');
+  if (!DATA) { container.innerHTML = noDataHtml(); return; }
+
+  const ranked = PAIRS
+    .filter(s => DATA[s])
+    .map(s => ({ sym: s, d: DATA[s] }))
+    .sort((a, b) => (b.d.score ?? 0) - (a.d.score ?? 0));
+
+  let html = `<div class="table-wrap"><table class="data-table"><thead><tr>
+    <th>RANK</th>
+    <th>SYMBOL</th>
+    <th>SCORE</th>
+    <th>BAR</th>
+    <th>TREND (1H)</th>
+    <th>ADX NOW (1H)</th>
+    <th>ADX AVG (1H)</th>
+    <th>ADX &gt;25% (1H)</th>
+    <th>ADX &gt;50% (1H)</th>
+    <th>AVG RANGE (1H)</th>
+    <th>TREND (4H)</th>
+    <th>ADX NOW (4H)</th>
+    <th>NOTES</th>
+  </tr></thead><tbody>`;
+
+  ranked.forEach(({ sym, d }, idx) => {
+    const score = d.score ?? 0;
+    const s1h   = d['1h'] || {};
+    const s4h   = d['4h'] || {};
+    const cls   = scoreClass(score);
+    const notes = buildNotes(d, score);
+    let pips = '';
+    for (let i = 0; i < 7; i++) {
+      const filled = i < score;
+      const col    = filled ? (score >= 5 ? '' : score >= 3 ? ' med' : ' low') : '';
+      pips += `<div class="rank-pip${filled ? ' on'+col : ''}"></div>`;
+    }
+    html += `
+    <tr>
+      <td style="color:${idx===0?'var(--amber)':'var(--muted)'};font-family:var(--font-head);font-size:18px">${idx+1}</td>
+      <td class="sym-cell">${sym}</td>
+      <td><span class="score-badge ${cls}">${score}</span></td>
+      <td><div class="rank-bar" style="gap:3px">${pips}</div></td>
+      <td>${trendHtml(s1h.trend)}</td>
+      <td>${adxHtml(s1h.adx_current)}</td>
+      <td>${adxHtml(s1h.adx_avg)}</td>
+      <td>${pctHtml(s1h.adx_pct_above25,70,40)}</td>
+      <td>${pctHtml(s1h.adx_pct_above50,30,15)}</td>
+      <td style="color:var(--amber)">${fmt(s1h.avg_range_pct,3)}%</td>
+      <td>${trendHtml(s4h.trend)}</td>
+      <td>${adxHtml(s4h.adx_current)}</td>
+      <td style="font-size:10px;color:#555;max-width:220px;white-space:normal">${notes}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+function buildNotes(d, score) {
+  const notes = [];
+  const s1h = d['1h'] || {};
+  const s4h = d['4h'] || {};
+
+  if ((s1h.adx_current||0) >= 50) notes.push('<span style="color:var(--green)">Strong trend now</span>');
+  if ((s1h.adx_pct_above25||0) >= 70) notes.push('<span style="color:var(--green)">Frequently trending</span>');
+  if ((s1h.adx_pct_above50||0) >= 30) notes.push('<span style="color:var(--green)">Often high ADX</span>');
+  if ((s1h.avg_range_pct||0) >= 1.0) notes.push('<span style="color:var(--amber)">High volatility</span>');
+  if ((s1h.avg_range_pct||0) < 0.3)  notes.push('<span style="color:var(--red)">Low volatility</span>');
+  if (s1h.trend !== 'Neutral' && s4h.trend === s1h.trend)
+    notes.push('<span style="color:var(--green)">1H/4H aligned</span>');
+  if ((s1h.adx_current||0) < 20) notes.push('<span style="color:var(--red)">Choppy now</span>');
+  if (score >= 6) notes.push('<span style="color:var(--green);font-weight:700">⭐ PRIME CANDIDATE</span>');
+  if (score <= 2) notes.push('<span style="color:var(--red)">⚠ Avoid</span>');
+
+  return notes.join(' · ') || '<span style="color:#333">—</span>';
+}
+
+function noDataHtml() {
+  return `<div class="no-data">
+    <div class="no-data-title">LOADING…</div>
+    Fetching pair_research.json from server.
+  </div>`;
+}
+
+function errorHtml(msg) {
+  return `<div class="no-data">
+    <div class="no-data-title" style="color:#ff4444">ERROR</div>
+    ${msg}<br><br>
+    Run <code style="color:var(--amber)">python hl_pair_research.py</code> and redeploy to regenerate data.
+  </div>`;
+}
+
+// ── Boot: fetch data immediately ──────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
