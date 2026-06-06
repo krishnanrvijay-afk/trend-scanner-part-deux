@@ -36,7 +36,7 @@ from config import (
 )
 from hl_client import HLClient
 from scanner import (run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
-                     get_cooldown_remaining, get_pair_signal_info)
+                     get_cooldown_remaining, get_pair_signal_info, clear_all_scanner_state)
 
 # ── Circuit breaker state (module-level) ──────────────────────────────────────
 consecutive_losses:    int  = 0
@@ -794,6 +794,54 @@ async def reset_circuit_breaker():
 @app.get("/api/tradelog")
 async def get_tradelog():
     return app_state.trade_log
+
+
+@app.delete("/api/tradelog")
+async def clear_tradelog():
+    global consecutive_losses, circuit_breaker_active
+
+    open_count = len(app_state.open_trades)
+    print(f"[CLEAR] forcing close of {open_count} open trades before log clear")
+
+    for key, trade in list(app_state.open_trades.items()):
+        sym       = trade["symbol"]
+        direction = trade["direction"]
+        exit_price = app_state.prices.get(sym, trade["entry_price"])
+        entry      = trade["entry_price"]
+        remaining  = trade.get("remaining_size", trade["size"])
+
+        if direction == "LONG":
+            pnl = (exit_price - entry) * remaining
+        else:
+            pnl = (entry - exit_price) * remaining
+
+        dollar_risk_usd = (
+            trade.get("dollar_risk_usd") or
+            trade.get("dollar_risk") or
+            (trade["margin"] * trade["leverage"] * (trade.get("sl_pct", 1) / 100))
+        )
+        r = round(pnl / dollar_risk_usd, 2) if dollar_risk_usd else 0.0
+
+        _append_trade_log(trade, exit_price, "MANUAL", pnl, r)
+        app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
+        print(f"[CLEAR CLOSE] {sym} {direction} exit_price={exit_price} pnl={round(pnl, 2)}")
+
+    # Reset circuit breaker
+    consecutive_losses     = 0
+    circuit_breaker_active = False
+
+    # Clear log (written above) then wipe all state
+    app_state.trade_log.clear()
+    app_state.open_trades.clear()
+    app_state.margin_deployed = 0.0
+    app_state.alerts.clear()
+    app_state.auto_pending.clear()
+
+    # Reset all scanner counters and cooldowns
+    clear_all_scanner_state()
+
+    print(f"[CLEAR] log cleared, state reset, {open_count} trades force closed")
+    return {"status": "ok", "trades_force_closed": open_count}
 
 
 @app.get("/api/tradelog/csv")
