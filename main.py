@@ -31,16 +31,26 @@ from pydantic import BaseModel
 
 from config import (
     PAIRS, SCAN_INTERVAL_SECONDS, PRICE_INTERVAL_SECONDS,
-    MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
+    MARGIN_HARD_CAP_USDC, MARGIN_PER_TRADE, MAX_SIMULTANEOUS_TRADES,
+    DEFAULT_LEVERAGE, PAPER_MODE,
     CONSECUTIVE_LOSS_STOP, TRAILING_TP_PCT, SL_PCT,
+    DAILY_LOSS_LIMIT,
 )
 from hl_client import HLClient
-from scanner import (run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
-                     get_cooldown_remaining, get_pair_signal_info, clear_all_scanner_state)
+from scanner import (
+    run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
+    get_cooldown_remaining, get_pair_signal_info, clear_all_scanner_state,
+    get_btc_regime, get_session_label,
+)
 
 # ── Circuit breaker state (module-level) ──────────────────────────────────────
 consecutive_losses:    int  = 0
 circuit_breaker_active: bool = False
+
+# ── Daily loss tracking (module-level) ────────────────────────────────────────
+daily_pnl:             float = 0.0
+trading_halted_today:  bool  = False
+_last_midnight_day:    int   = datetime.now(timezone.utc).day  # track UTC day for auto-reset
 
 
 # ── App state ─────────────────────────────────────────────────────────────────
@@ -62,11 +72,19 @@ class AppState:
     def cap_reached(self) -> bool:
         return self.margin_deployed >= MARGIN_HARD_CAP_USDC
 
+    @property
+    def slots_used(self) -> int:
+        return len(self.open_trades)
+
+    @property
+    def slots_full(self) -> bool:
+        return self.slots_used >= MAX_SIMULTANEOUS_TRADES
+
     def get_trade_key(self, symbol: str, direction: str) -> str:
         return f"{symbol}{direction}"
 
     def serialise(self) -> dict:
-        global consecutive_losses, circuit_breaker_active
+        global consecutive_losses, circuit_breaker_active, daily_pnl, trading_halted_today
 
         trades_serialised = {}
         for k, t in self.open_trades.items():
@@ -209,12 +227,23 @@ class AppState:
                 "cap_reached":     self.cap_reached,
                 "trades_opened":   self.trades_opened,
                 "paper_mode":      PAPER_MODE,
+                "slots_used":      self.slots_used,
+                "slots_available": MAX_SIMULTANEOUS_TRADES - self.slots_used,
+                "max_slots":       MAX_SIMULTANEOUS_TRADES,
+                "slots_full":      self.slots_full,
             },
             "circuit_breaker": {
                 "active":             circuit_breaker_active,
                 "consecutive_losses": consecutive_losses,
                 "stop_at":            CONSECUTIVE_LOSS_STOP,
             },
+            "daily": {
+                "pnl":             round(daily_pnl, 2),
+                "limit":           DAILY_LOSS_LIMIT,
+                "halted":          trading_halted_today,
+            },
+            "btc_regime":      get_btc_regime(),
+            "session_label":   get_session_label(),
             "last_scan_at":    self.last_scan_at,
             "scan_count":      self.scan_count,
             "deploy_time":     DEPLOY_TIME,
@@ -251,6 +280,19 @@ def _calc_r(entry: float, close: float, direction: str, sl_dist) -> float:
     if direction == "LONG":
         return round((close - entry) / d, 2)
     return round((entry - close) / d, 2)
+
+
+# ── Daily P&L tracking ────────────────────────────────────────────────────────
+
+def _update_daily_pnl(pnl: float):
+    global daily_pnl, trading_halted_today
+    daily_pnl = round(daily_pnl + pnl, 2)
+    if not trading_halted_today and daily_pnl <= DAILY_LOSS_LIMIT:
+        trading_halted_today = True
+        print(
+            f"[DAILY LIMIT] daily_pnl=${daily_pnl:.2f} <= limit={DAILY_LOSS_LIMIT} "
+            f"— trading halted for the day"
+        )
 
 
 # ── Trade log helper ──────────────────────────────────────────────────────────
@@ -377,7 +419,7 @@ async def _do_open_trade(
 # ── Auto-entry (3s countdown) ─────────────────────────────────────────────────
 
 async def _auto_open_trade(trade_key: str, alert: dict):
-    global circuit_breaker_active
+    global circuit_breaker_active, trading_halted_today
     await asyncio.sleep(3)
     app_state.auto_pending.pop(trade_key, None)
     if trade_key in app_state.open_trades or app_state.cap_reached:
@@ -385,11 +427,20 @@ async def _auto_open_trade(trade_key: str, alert: dict):
     if circuit_breaker_active:
         print(f"[CIRCUIT BREAKER] {alert['symbol']} {alert['direction']} auto-entry blocked — circuit breaker active")
         return
+    if trading_halted_today:
+        print(f"[DAILY LIMIT] {alert['symbol']} {alert['direction']} auto-entry blocked — daily loss limit hit")
+        return
+    if app_state.slots_full:
+        print(
+            f"[BLOCKED] {alert['symbol']} {alert['direction']} slots full "
+            f"({app_state.slots_used}/{MAX_SIMULTANEOUS_TRADES} open)"
+        )
+        return
 
     lev   = alert.get("leverage", DEFAULT_LEVERAGE)
     trade, err = await _do_open_trade(
         alert["symbol"], alert["direction"],
-        DEFAULT_MARGIN_USDC, lev, alert,
+        MARGIN_PER_TRADE, lev, alert,
     )
     if trade:
         print(f"[auto-entry] {alert['symbol']} {alert['direction']} opened at {trade['entry_price']} leverage={lev}x")
@@ -469,6 +520,7 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
         if not (-1.5 <= r <= 3.0):
             print(f"[R WARNING] {sym} {direction} r_value={r} outside expected range")
         _append_trade_log(trade, close_price, "TP1_PARTIAL", pnl, r)
+        _update_daily_pnl(pnl)
 
         trade["tp1_hit"]        = True
         trade["remaining_size"] = half
@@ -492,6 +544,7 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
         if not (-1.5 <= r <= 3.0):
             print(f"[R WARNING] {sym} {direction} r_value={r} outside expected range")
         _append_trade_log(trade, close_price, reason, pnl, r)
+        _update_daily_pnl(pnl)
 
         if reason == "TRAILING_STOP":
             ep = trade.get("extreme_price", close_price)
@@ -517,77 +570,87 @@ async def _execute_auto_exit(key: str, reason: str, close_price: float):
 # ── Background tasks ──────────────────────────────────────────────────────────
 
 async def scan_loop():
-    global app_state, hl_client
+    global app_state, hl_client, trading_halted_today
     while True:
         scan_start_time = time.time()
-        sleep_for = float(SCAN_INTERVAL_SECONDS)   # fallback if exception before calc
+        sleep_for = float(SCAN_INTERVAL_SECONDS)
         try:
             pair_states, new_alerts = await run_full_scan(hl_client)
-            app_state.pair_states = pair_states
 
-            for ps in pair_states:
-                sym   = ps.get("symbol")
-                price = ps.get("price")
-                if sym and price:
-                    app_state.prices[sym] = price
+            # pair_states is None when session filter blocked the scan
+            if pair_states is not None:
+                app_state.pair_states = pair_states
 
-            for alert in new_alerts:
-                key = app_state.get_trade_key(alert["symbol"], alert["direction"])
-                alert["is_in_trade"] = key in app_state.open_trades
-                alert["alert_id"]    = f"{alert['symbol']}{alert['direction']}{alert.get('fired_at', int(time.time()))}"
+                for ps in pair_states:
+                    sym   = ps.get("symbol")
+                    price = ps.get("price")
+                    if sym and price:
+                        app_state.prices[sym] = price
 
-            existing_keys = {
-                (a["symbol"], a["direction"])
-                for a in app_state.alerts
-                if time.time() - a.get("fired_at", 0) < 90 * 60
-            }
+                for alert in new_alerts:
+                    key = app_state.get_trade_key(alert["symbol"], alert["direction"])
+                    alert["is_in_trade"] = key in app_state.open_trades
+                    alert["alert_id"]    = f"{alert['symbol']}{alert['direction']}{alert.get('fired_at', int(time.time()))}"
 
-            for alert in new_alerts:
-                k      = (alert["symbol"], alert["direction"])
-                status = alert.get("status", "")
+                existing_keys = {
+                    (a["symbol"], a["direction"])
+                    for a in app_state.alerts
+                    if time.time() - a.get("fired_at", 0) < 90 * 60
+                }
 
-                # Update existing awaiting_entry alert in place
-                if status == "awaiting_entry":
-                    if k in existing_keys:
+                for alert in new_alerts:
+                    k      = (alert["symbol"], alert["direction"])
+                    status = alert.get("status", "")
+
+                    # Update existing awaiting_entry alert in place
+                    if status == "awaiting_entry":
+                        if k in existing_keys:
+                            for a in app_state.alerts:
+                                if a["symbol"] == alert["symbol"] and a["direction"] == alert["direction"]:
+                                    a.update(alert)
+                            continue
+                        app_state.alerts.append(alert)
+                        existing_keys.add(k)
+                        continue  # no auto-entry for awaiting_entry state
+
+                    # Fired/triggered entry — update awaiting_entry alert status in place
+                    if status == "entry_triggered":
                         for a in app_state.alerts:
                             if a["symbol"] == alert["symbol"] and a["direction"] == alert["direction"]:
                                 a.update(alert)
-                        continue
-                    app_state.alerts.append(alert)
-                    existing_keys.add(k)
-                    continue  # no auto-entry for awaiting_entry state
-
-                # Fired/triggered entry — update awaiting_entry alert status in place
-                if status == "entry_triggered":
-                    for a in app_state.alerts:
-                        if a["symbol"] == alert["symbol"] and a["direction"] == alert["direction"]:
-                            a.update(alert)
-                            break
+                                break
+                        else:
+                            if k not in existing_keys:
+                                app_state.alerts.append(alert)
+                                existing_keys.add(k)
                     else:
                         if k not in existing_keys:
                             app_state.alerts.append(alert)
                             existing_keys.add(k)
-                else:
-                    if k not in existing_keys:
-                        app_state.alerts.append(alert)
-                        existing_keys.add(k)
 
-                # Auto-entry (only for fired/triggered alerts)
-                if PAPER_MODE and status in ("entry_triggered", ""):
-                    trade_key = app_state.get_trade_key(alert["symbol"], alert["direction"])
-                    if trade_key not in app_state.open_trades and not app_state.cap_reached:
-                        if circuit_breaker_active:
-                            print(f"[CIRCUIT BREAKER] {alert['symbol']} {alert['direction']} auto-entry blocked")
-                        elif not alert.get("entry_price") or alert.get("entry_price") == 0.0:
-                            print(f"[TRADE BLOCKED] {alert['symbol']} {alert['direction']} null price rejected")
-                        else:
-                            app_state.auto_pending[trade_key] = {
-                                "symbol":    alert["symbol"],
-                                "direction": alert["direction"],
-                                "fire_at":   time.time() + 3,
-                            }
-                            asyncio.create_task(_auto_open_trade(trade_key, alert))
-                            print(f"[auto-entry] {alert['symbol']} {alert['direction']} scheduled in 3s")
+                    # Auto-entry (only for fired/triggered alerts)
+                    if PAPER_MODE and status in ("entry_triggered", ""):
+                        trade_key = app_state.get_trade_key(alert["symbol"], alert["direction"])
+                        if trade_key not in app_state.open_trades and not app_state.cap_reached:
+                            if circuit_breaker_active:
+                                print(f"[CIRCUIT BREAKER] {alert['symbol']} {alert['direction']} auto-entry blocked")
+                            elif trading_halted_today:
+                                print(f"[DAILY LIMIT] {alert['symbol']} {alert['direction']} auto-entry blocked — daily limit hit")
+                            elif app_state.slots_full:
+                                print(
+                                    f"[BLOCKED] {alert['symbol']} {alert['direction']} slots full "
+                                    f"({app_state.slots_used}/{MAX_SIMULTANEOUS_TRADES} open)"
+                                )
+                            elif not alert.get("entry_price") or alert.get("entry_price") == 0.0:
+                                print(f"[TRADE BLOCKED] {alert['symbol']} {alert['direction']} null price rejected")
+                            else:
+                                app_state.auto_pending[trade_key] = {
+                                    "symbol":    alert["symbol"],
+                                    "direction": alert["direction"],
+                                    "fire_at":   time.time() + 3,
+                                }
+                                asyncio.create_task(_auto_open_trade(trade_key, alert))
+                                print(f"[auto-entry] {alert['symbol']} {alert['direction']} scheduled in 3s")
 
             app_state.alerts = app_state.alerts[-50:]
             app_state.last_scan_at = int(time.time())
@@ -605,7 +668,7 @@ async def scan_loop():
 
 
 async def price_loop():
-    global app_state, hl_client
+    global app_state, hl_client, daily_pnl, trading_halted_today, _last_midnight_day
     while True:
         try:
             prices = await hl_client.get_all_prices()
@@ -627,6 +690,14 @@ async def price_loop():
                         print(f"[TRAILING] {sym} {direction} "
                               f"new_trailing_sl={trailing_sl:.4f} extreme_price={ep:.4f}")
 
+            # ── Midnight UTC auto-reset ────────────────────────────────────────
+            current_day = datetime.now(timezone.utc).day
+            if current_day != _last_midnight_day:
+                _last_midnight_day  = current_day
+                daily_pnl           = 0.0
+                trading_halted_today = False
+                print("[DAILY RESET] midnight UTC — daily_pnl=0.0 trading_halted=False")
+
         except Exception as e:
             print(f"[price_loop] Error: {e}")
         await asyncio.sleep(PRICE_INTERVAL_SECONDS)
@@ -640,8 +711,9 @@ async def lifespan(app: FastAPI):
     hl_client = HLClient()
     print("[startup] HLClient initialized")
     print(
-        "[CONFIG] ADX=30 DEPTH=60% SL=3% TP1=4.5% TP2=6% COOLDOWN=60min "
-        "CIRCUIT=5 LEVERAGE=10/8/6x PAPER=True CONDITIONS=4 NO_SCORING"
+        "[CONFIG] MARGIN=2000 | MAX_TRADES=2 | SL=3% | TRAILING=0.25% | COOLDOWN=60min "
+        "| CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=10x/15x/25x "
+        "| SESSION=EU+US | BTC_REGIME=on | PAPER=" + str(PAPER_MODE)
     )
 
     scan_task  = asyncio.create_task(scan_loop())
@@ -694,19 +766,29 @@ async def get_account():
         "trades_opened":   app_state.trades_opened,
         "open_count":      len(app_state.open_trades),
         "paper_mode":      PAPER_MODE,
+        "slots_used":      app_state.slots_used,
+        "slots_available": MAX_SIMULTANEOUS_TRADES - app_state.slots_used,
     }
 
 
 class OpenTradeRequest(BaseModel):
     symbol: str
     direction: str
-    margin_usdc: float = DEFAULT_MARGIN_USDC
+    margin_usdc: float = MARGIN_PER_TRADE
     leverage: int = DEFAULT_LEVERAGE
     alert_id: Optional[str] = None
 
 
 @app.post("/api/trade/open")
 async def open_trade(req: OpenTradeRequest):
+    if trading_halted_today:
+        raise HTTPException(status_code=400, detail="Daily loss limit reached — trading halted until midnight UTC.")
+    if app_state.slots_full:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slots full — {app_state.slots_used}/{MAX_SIMULTANEOUS_TRADES} trades open.",
+        )
+
     trade_key = app_state.get_trade_key(req.symbol, req.direction)
     app_state.auto_pending.pop(trade_key, None)
 
@@ -766,6 +848,7 @@ async def close_trade(req: CloseTradeRequest):
     if not (-1.5 <= r <= 3.0):
         print(f"[R WARNING] {req.symbol} {req.direction} r_value={r} outside expected range")
     _append_trade_log(trade, close_price, "MANUAL", pnl, r)
+    _update_daily_pnl(pnl)
 
     print(
         f"[TRADE CLOSE] {req.symbol} {req.direction} exit=MANUAL pnl=${pnl:.2f} r={r:+.2f} "
@@ -794,6 +877,17 @@ async def reset_circuit_breaker():
     return {"status": "ok", "circuit_breaker_active": False, "consecutive_losses": 0}
 
 
+# ── Daily limit reset ─────────────────────────────────────────────────────────
+
+@app.post("/api/reset-day")
+async def reset_day():
+    global daily_pnl, trading_halted_today
+    daily_pnl            = 0.0
+    trading_halted_today = False
+    print("[DAILY RESET] manual reset — daily_pnl=0.0 trading_halted=False")
+    return {"status": "ok", "daily_pnl": 0.0, "trading_halted_today": False}
+
+
 # ── Trade log routes ──────────────────────────────────────────────────────────
 
 @app.get("/api/tradelog")
@@ -803,7 +897,7 @@ async def get_tradelog():
 
 @app.delete("/api/tradelog")
 async def clear_tradelog():
-    global consecutive_losses, circuit_breaker_active
+    global consecutive_losses, circuit_breaker_active, daily_pnl, trading_halted_today
 
     open_count = len(app_state.open_trades)
     print(f"[CLEAR] forcing close of {open_count} open trades before log clear")
@@ -831,9 +925,11 @@ async def clear_tradelog():
         app_state.margin_deployed = max(0.0, app_state.margin_deployed - trade["margin"])
         print(f"[CLEAR CLOSE] {sym} {direction} exit_price={exit_price} pnl={round(pnl, 2)}")
 
-    # Reset circuit breaker
+    # Reset circuit breaker and daily tracking
     consecutive_losses     = 0
     circuit_breaker_active = False
+    daily_pnl              = 0.0
+    trading_halted_today   = False
 
     # Clear log (written above) then wipe all state
     app_state.trade_log.clear()
