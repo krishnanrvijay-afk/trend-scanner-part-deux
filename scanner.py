@@ -92,6 +92,15 @@ def reset_scan_counter(symbol: str, direction: str):
     logger.info("[RESET] %s %s scan counter reset", symbol, direction)
 
 
+def clear_all_scanner_state():
+    """Wipe all per-pair scan state — used by the log-clear endpoint."""
+    _last_result.clear()
+    _pending.clear()
+    _confirmed_at.clear()
+    _cooldowns.clear()
+    logger.info("[CLEAR] all scanner state cleared (counters + cooldowns)")
+
+
 # ── Pure-pandas indicator helpers ─────────────────────────────────────────────
 
 def _wilder_smooth(series: pd.Series, period: int) -> pd.Series:
