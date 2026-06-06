@@ -845,49 +845,157 @@ function renderAll() {
 function renderTradeLog() {
   const container = document.getElementById('tradelog-container');
   if (!container || !state) return;
-  const log = (state.trade_log || []).slice().reverse();
 
-  if (log.length === 0) {
+  const openTrades = Object.values(state.open_trades || {});
+  const log        = (state.trade_log || []).slice().reverse();
+
+  if (openTrades.length === 0 && log.length === 0) {
     container.innerHTML = '<div class="log-empty">No completed trades yet.</div>';
     return;
   }
 
-  let html = '<div class="log-scroll"><table class="log-table"><thead><tr>'
-    + '<th>TIME</th><th>SYMBOL</th><th>DIR</th><th>SCORE</th>'
-    + '<th>ENTRY</th><th>EXIT</th><th>REASON</th><th>PNL</th><th>R</th><th>DUR</th>'
-    + '</tr></thead><tbody>';
+  let html = '';
 
-  for (const t of log) {
-    const dt = new Date(t.timestamp_closed * 1000);
-    const timeStr = dt.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-    const pnlColor = (t.pnl_usd ?? 0) >= 0 ? '#00ff88' : '#ff4444';
-    const rColor   = (t.r_value  ?? 0) >= 0 ? '#00ff88' : '#ff4444';
-    const pnlSign  = (t.pnl_usd ?? 0) >= 0 ? '+' : '';
-    const rSign    = (t.r_value  ?? 0) >= 0 ? '+' : '';
-    const dur      = t.duration_seconds < 60
-      ? `${t.duration_seconds}s`
-      : `${Math.floor(t.duration_seconds / 60)}m${t.duration_seconds % 60}s`;
-    const dirClass = t.direction === 'LONG' ? 'dir-long' : 'dir-short';
+  // ── IN PROGRESS section ────────────────────────────────────────────────────
+  if (openTrades.length > 0) {
+    html += `<div style="padding:12px 16px 4px">
+      <div style="font-size:10px;font-weight:800;letter-spacing:.12em;color:#ffaa00;margin-bottom:8px;text-transform:uppercase">
+        ▶ IN PROGRESS
+      </div>
+      <div class="log-scroll"><table class="log-table"><thead><tr>
+        <th>OPENED</th><th>SYMBOL</th><th>DIR</th><th>ADX</th>
+        <th>ENTRY</th><th>CURRENT</th><th>UNREAL PNL</th><th>UNREAL R</th><th>DURATION</th>
+      </tr></thead><tbody>`;
 
-    html += `<tr>
-      <td style="color:var(--muted);font-size:10px">${timeStr}</td>
-      <td class="sym">${t.symbol}</td>
-      <td><span class="dir-pill ${dirClass}" style="font-size:9px;padding:2px 5px">${t.direction}</span></td>
-      <td style="text-align:right">${t.score ?? '—'}</td>
-      <td style="text-align:right">${fmtPrice(t.entry_price)}</td>
-      <td style="text-align:right">${fmtPrice(t.exit_price)}</td>
-      <td style="font-size:10px;color:var(--muted)">${t.exit_reason}</td>
-      <td style="color:${pnlColor};font-weight:bold;text-align:right">${pnlSign}$${fmt(t.pnl_usd, 2)}</td>
-      <td style="color:${rColor};text-align:right">${rSign}${fmt(t.r_value, 2)}R</td>
-      <td style="color:var(--muted);font-size:10px">${dur}</td>
-    </tr>`;
+    for (const t of openTrades) {
+      const isLong   = t.direction === 'LONG';
+      const pnl      = t.unrealized_pnl ?? 0;
+      const r        = t.r ?? 0;
+      const pnlColor = pnl >= 0 ? '#00ff88' : '#ff4444';
+      const rColor   = r   >= 0 ? '#00ff88' : '#ff4444';
+      const pnlSign  = pnl >= 0 ? '+' : '';
+      const rSign    = r   >= 0 ? '+' : '';
+      const dirClass = isLong ? 'dir-long' : 'dir-short';
+      const openedStr = new Date((t.opened_at || 0) * 1000)
+        .toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+      const elapsedS = t.elapsed_s ?? 0;
+      const dur = elapsedS < 60 ? `${elapsedS}s` : `${Math.floor(elapsedS / 60)}m${elapsedS % 60}s`;
+
+      html += `<tr style="border-left:2px solid ${isLong ? '#00ff88' : '#ff4444'}">
+        <td style="color:var(--muted);font-size:10px">${openedStr}</td>
+        <td class="sym">${t.symbol}</td>
+        <td><span class="dir-pill ${dirClass}" style="font-size:9px;padding:2px 5px">${t.direction}</span></td>
+        <td style="text-align:right;color:${(t.adx||0)>=30?'#00ff88':'#666666'}">${fmt(t.adx,1)}</td>
+        <td style="text-align:right">${fmtPrice(t.entry_price)}</td>
+        <td style="text-align:right;color:#ffffff;font-weight:700">${fmtPrice(t.current_price)}</td>
+        <td style="color:${pnlColor};font-weight:bold;text-align:right">${pnlSign}$${fmt(pnl,2)}</td>
+        <td style="color:${rColor};text-align:right">${rSign}${fmt(r,2)}R</td>
+        <td style="color:var(--muted);font-size:10px">${dur}</td>
+      </tr>`;
+    }
+
+    html += '</tbody></table></div></div>';
   }
 
-  html += '</tbody></table></div>';
+  // ── Closed trades log ──────────────────────────────────────────────────────
+  if (log.length > 0) {
+    if (openTrades.length > 0) {
+      html += `<div style="padding:4px 16px 0">
+        <div style="font-size:10px;font-weight:800;letter-spacing:.12em;color:#555;text-transform:uppercase;margin-bottom:8px">
+          CLOSED
+        </div>`;
+    }
+
+    html += '<div class="log-scroll"><table class="log-table"><thead><tr>'
+      + '<th>TIME</th><th>SYMBOL</th><th>DIR</th><th>SCORE</th>'
+      + '<th>ENTRY</th><th>EXIT</th><th>REASON</th><th>PNL</th><th>R</th><th>DUR</th>'
+      + '</tr></thead><tbody>';
+
+    for (const t of log) {
+      const dt = new Date(t.timestamp_closed * 1000);
+      const timeStr = dt.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+      const pnlColor = (t.pnl_usd ?? 0) >= 0 ? '#00ff88' : '#ff4444';
+      const rColor   = (t.r_value  ?? 0) >= 0 ? '#00ff88' : '#ff4444';
+      const pnlSign  = (t.pnl_usd ?? 0) >= 0 ? '+' : '';
+      const rSign    = (t.r_value  ?? 0) >= 0 ? '+' : '';
+      const dur      = t.duration_seconds < 60
+        ? `${t.duration_seconds}s`
+        : `${Math.floor(t.duration_seconds / 60)}m${t.duration_seconds % 60}s`;
+      const dirClass = t.direction === 'LONG' ? 'dir-long' : 'dir-short';
+
+      html += `<tr>
+        <td style="color:var(--muted);font-size:10px">${timeStr}</td>
+        <td class="sym">${t.symbol}</td>
+        <td><span class="dir-pill ${dirClass}" style="font-size:9px;padding:2px 5px">${t.direction}</span></td>
+        <td style="text-align:right">${t.score ?? '—'}</td>
+        <td style="text-align:right">${fmtPrice(t.entry_price)}</td>
+        <td style="text-align:right">${fmtPrice(t.exit_price)}</td>
+        <td style="font-size:10px;color:var(--muted)">${t.exit_reason}</td>
+        <td style="color:${pnlColor};font-weight:bold;text-align:right">${pnlSign}$${fmt(t.pnl_usd, 2)}</td>
+        <td style="color:${rColor};text-align:right">${rSign}${fmt(t.r_value, 2)}R</td>
+        <td style="color:var(--muted);font-size:10px">${dur}</td>
+      </tr>`;
+    }
+
+    html += '</tbody></table></div>';
+    if (openTrades.length > 0) html += '</div>';
+  }
+
   container.innerHTML = html;
 }
 
+// ── Clear confirmation modal ───────────────────────────────────────────────────
+
+function showClearConfirm(openCount) {
+  return new Promise(resolve => {
+    const existing = document.getElementById('clear-confirm-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'clear-confirm-modal';
+    modal.style.cssText = [
+      'position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:9999;',
+      'display:flex;align-items:center;justify-content:center;',
+    ].join('');
+
+    const tradeMsg = openCount > 0
+      ? `This will force close <b style="color:#ff4444">${openCount} open trade${openCount > 1 ? 's' : ''}</b> and clear the log.`
+      : 'This will clear the completed trade log.';
+
+    modal.innerHTML = `
+      <div style="
+        background:#141720;border:1px solid #2a2f3e;border-radius:10px;
+        padding:28px 32px;max-width:360px;width:90%;font-family:var(--font);
+        box-shadow:0 24px 80px rgba(0,0,0,0.9);
+      ">
+        <div style="font-size:14px;font-weight:800;letter-spacing:.08em;color:#ffffff;margin-bottom:12px">CLEAR ALL</div>
+        <div style="font-size:12px;color:#888;line-height:1.8;margin-bottom:24px">${tradeMsg}<br>Confirm?</div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button id="cc-cancel" style="
+            padding:8px 20px;border-radius:5px;border:1px solid #333;
+            background:#1a1e2a;color:#666;font-family:var(--font);
+            font-size:11px;font-weight:700;letter-spacing:.06em;cursor:pointer;
+          ">CANCEL</button>
+          <button id="cc-yes" style="
+            padding:8px 20px;border-radius:5px;border:1px solid rgba(255,68,68,0.5);
+            background:rgba(255,68,68,0.18);color:#ff4444;font-family:var(--font);
+            font-size:11px;font-weight:700;letter-spacing:.06em;cursor:pointer;
+          ">YES, CLEAR</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(modal);
+    document.getElementById('cc-cancel').onclick = () => { modal.remove(); resolve(false); };
+    document.getElementById('cc-yes').onclick   = () => { modal.remove(); resolve(true); };
+    modal.onclick = e => { if (e.target === modal) { modal.remove(); resolve(false); } };
+  });
+}
+
 async function clearTradeLog() {
+  const openCount = Object.keys((state && state.open_trades) || {}).length;
+  const confirmed = await showClearConfirm(openCount);
+  if (!confirmed) return;
+
   const btn = document.getElementById('clear-log-btn');
   try {
     await fetch('/api/tradelog', { method: 'DELETE' });
