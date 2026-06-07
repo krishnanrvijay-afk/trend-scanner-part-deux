@@ -29,6 +29,7 @@ _btc_regime:      str              = "Neutral"  # updated each BTC scan
 _last_known_good: dict[str, dict]  = {}   # symbol → last successful scan result
 _candle_cache:    dict[str, dict]  = {}   # "{symbol}_1h" → {candles, hour, last_ts}
 _funding_cache:   dict[str, Optional[float]] = {}  # symbol → latest funding rate
+_cycle_stats:     dict = {"blocked_shorts": 0, "blocked_longs": 0, "allowed_longs": 0, "allowed_shorts": 0}
 
 CONFIRMED_SHOW_SECONDS = 30  # show ALERT state in signal column for this long
 
@@ -37,7 +38,7 @@ logger.info(
     "[CONFIG] MARGIN=%d | SL=3%%(FIXED) | SL_HALF=0.6%% | TP=1.5R/2.5R/4.0R(HIGH)/2.5R(STRONG)/1.5R(REG)"
     " | COOLDOWN=60min | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=%dx/%dx/%dx"
     " | WALLS=enabled | CANDLE_CACHE=1h | RATE_LIMIT=stagger_0.3s_backoff_2s"
-    " | EXCHANGE=HL+MEXC | BTC_REGIME=on | ADX_OVERRIDES=%s | PAPER=%s",
+    " | EXCHANGE=HL+MEXC | BTC_REGIME=enabled | ADX_OVERRIDES=%s | PAPER=%s",
     MARGIN_PER_TRADE,
     LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
     _overrides_str, PAPER_MODE,
@@ -726,25 +727,33 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                 regime = _btc_regime
                 if regime == "Neutral":
                     logger.info(
-                        "[REGIME] BTC=Neutral blocking %s %s signal", symbol, direction
+                        "[REGIME BLOCK] %s %s blocked — BTC regime is NEUTRAL", symbol, direction
                     )
+                    _cycle_stats["blocked_shorts" if direction == "SHORT" else "blocked_longs"] += 1
                     _last_result[key] = False
                     _pending.pop(key, None)
                     continue
                 if regime == "Strong Bear" and direction == "LONG":
                     logger.info(
-                        "[REGIME] BTC=StrongBear blocking %s LONG signal", symbol
+                        "[REGIME BLOCK] %s LONG blocked — BTC regime is BEAR", symbol
                     )
+                    _cycle_stats["blocked_longs"] += 1
                     _last_result[key] = False
                     _pending.pop(key, None)
                     continue
                 if regime == "Strong Bull" and direction == "SHORT":
                     logger.info(
-                        "[REGIME] BTC=StrongBull blocking %s SHORT signal", symbol
+                        "[REGIME BLOCK] %s SHORT blocked — BTC regime is BULL", symbol
                     )
+                    _cycle_stats["blocked_shorts"] += 1
                     _last_result[key] = False
                     _pending.pop(key, None)
                     continue
+                # Signal passed regime gate — count as allowed
+                if direction == "LONG":
+                    _cycle_stats["allowed_longs"] += 1
+                else:
+                    _cycle_stats["allowed_shorts"] += 1
 
             if last:
                 # Second consecutive scan — fire confirmed alert
@@ -854,6 +863,11 @@ async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
     except Exception as e:
         logger.warning("[FUNDING] metadata fetch failed: %s", e)
 
+    _cycle_stats["blocked_shorts"] = 0
+    _cycle_stats["blocked_longs"]  = 0
+    _cycle_stats["allowed_longs"]  = 0
+    _cycle_stats["allowed_shorts"] = 0
+
     results = []
     for i, sym in enumerate(PAIRS):
         if i > 0:
@@ -863,6 +877,18 @@ async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
         except Exception as e:
             result = e
         results.append(result)
+
+    regime_label = (
+        "BULL"    if _btc_regime == "Strong Bull"
+        else "BEAR"    if _btc_regime == "Strong Bear"
+        else "NEUTRAL"
+    )
+    logger.info(
+        "[REGIME] current=%s blocked_shorts=%d allowed_longs=%d",
+        regime_label,
+        _cycle_stats["blocked_shorts"],
+        _cycle_stats["allowed_longs"],
+    )
 
     pair_states, new_alerts = [], []
     for result in results:
