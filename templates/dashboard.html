@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Trend Scanner Part Deux</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Bebas+Neue&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -24,6 +25,7 @@
       --neutral: #64748b;
       --radius: 8px;
       --font: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace;
+      --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
     }
 
     body {
@@ -133,7 +135,6 @@
       transition: width 0.4s ease, background 0.4s ease;
     }
 
-    /* cap-bar-fill reused by hc-capbar-fill */
     .cap-bar-fill {
       height: 100%;
       border-radius: 2px;
@@ -153,11 +154,18 @@
       50% { opacity: 0.3; }
     }
 
-    /* ── Pair table ──────────────────────────────────────────── */
+    /* ── Scanner layout: table + side panel ─────────────────── */
+    .scanner-layout {
+      display: flex;
+      align-items: flex-start;
+    }
     .table-panel {
-      width: 100%;
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
     }
 
+    /* ── Pair table ──────────────────────────────────────────── */
     table {
       width: 100%;
       border-collapse: collapse;
@@ -166,7 +174,7 @@
     thead th {
       background: var(--surface2);
       padding: 10px 12px;
-      text-align: left;
+      text-align: right;
       font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.08em;
@@ -175,21 +183,27 @@
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
-
-    thead th:not(:first-child) { text-align: right; }
+    thead th:first-child { text-align: left; }
+    thead th.th-trend    { text-align: left; min-width: 100px; }
+    thead th.th-gates    { text-align: center; }
+    thead th.th-signal   { text-align: center; }
 
     tbody tr {
-      border-bottom: 1px solid var(--border);
-      transition: background 0.15s;
+      transition: background 0.12s;
     }
-    tbody tr:hover { background: var(--surface2); }
+    tbody tr.row-hover { background: var(--surface2); }
+
+    /* Two-row pair layout */
+    tbody tr.pair-row-1 { border-bottom: none; }
+    tbody tr.pair-row-2 { border-bottom: 1px solid var(--border); }
 
     td {
-      padding: 11px 12px;
+      padding: 10px 12px;
       color: var(--text);
       white-space: nowrap;
+      text-align: right;
     }
-    td:not(:first-child) { text-align: right; }
+    td:first-child { text-align: left; }
 
     .sym { font-weight: 700; letter-spacing: 0.04em; }
     .price-cell { font-variant-numeric: tabular-nums; }
@@ -201,6 +215,36 @@
     .score-high { color: var(--green); font-weight: 700; }
     .score-med  { color: var(--yellow); }
     .score-low  { color: var(--muted); }
+
+    /* ── Depth strip (row 2) ─────────────────────────────────── */
+    .depth-strip {
+      display: flex;
+      align-items: center;
+      background: #0a0a0a;
+      padding: 4px 12px;
+    }
+    .depth-buyers, .depth-sellers {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      padding: 3px 0;
+    }
+    .ds-divider {
+      width: 1px;
+      height: 20px;
+      background: #222222;
+      flex-shrink: 0;
+      margin: 0 12px;
+    }
+    .ds-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+    .ds-label-buy  { color: #00ff88; }
+    .ds-label-sell { color: #ff4444; }
+    .ds-pct { font-size: 12px; font-weight: 700; font-family: var(--mono); }
+    .ds-pct-buy  { color: #00ff88; }
+    .ds-pct-sell { color: #ff4444; }
+    .ds-wall-lbl { font-size: 9px; color: #555555; text-transform: uppercase; letter-spacing: 0.06em; }
+    .ds-wall-val { font-size: 12px; font-weight: 700 !important; color: #ffffff !important; font-family: var(--mono); }
 
     /* ── Alert cards ─────────────────────────────────────────── */
     .alerts-empty {
@@ -376,15 +420,6 @@
       flex-shrink: 0;
       vertical-align: middle;
     }
-    .promoted-divider td {
-      padding: 5px 12px;
-      text-align: center;
-      color: #555;
-      font-size: 10px;
-      letter-spacing: 0.14em;
-      background: #0d0f14;
-      border-bottom: 1px solid var(--border);
-    }
 
     /* ── Scrollbars ──────────────────────────────────────────── */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -439,15 +474,6 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .gate-sep {
-      display: inline-block;
-      width: 1px;
-      height: 10px;
-      background: #333333;
-      margin: 0 2px;
-      flex-shrink: 0;
-      vertical-align: middle;
-    }
     .gates-subheader td {
       padding: 2px 12px 3px;
       background: var(--surface2);
@@ -456,50 +482,6 @@
       color: #444;
       letter-spacing: .05em;
       line-height: 1;
-    }
-
-    /* ── Market snapshot panel ───────────────────────────────── */
-    .snapshot-panel {
-      border-top: 1px solid var(--border);
-      background: #111111;
-    }
-    .snapshot-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 9px 14px;
-      cursor: pointer;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: #ffffff;
-      user-select: none;
-      border-bottom: 1px solid var(--border);
-    }
-    .snapshot-header:hover { background: var(--surface2); }
-    .snapshot-chevron { font-size: 10px; color: var(--muted); }
-    .snapshot-body { padding: 12px 14px; }
-    .snapshot-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px 20px;
-    }
-    .snapshot-section { display: flex; flex-direction: column; gap: 5px; }
-    .snap-label {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: #ffffff;
-      margin-bottom: 3px;
-    }
-    .snap-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-    .snap-key {
-      font-size: 9px;
-      color: #ffffff;
-      min-width: 48px;
-      flex-shrink: 0;
     }
 
     /* ── Error toast ─────────────────────────────────────────── */
@@ -692,6 +674,97 @@
       30%, 70%  { color: #ffaa00; }
     }
     .tab-flash { animation: tab-label-flash 0.6s ease-in-out 3; }
+
+    /* ── Right side panel ────────────────────────────────────── */
+    .side-panel {
+      width: 200px;
+      flex-shrink: 0;
+      background: #0a0c10;
+      border-left: 1px solid var(--border);
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      max-height: 100vh;
+      overflow-y: auto;
+    }
+    .sp-section {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .sp-title {
+      font-size: 9px;
+      color: #ffffff;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 400;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #1a1e28;
+      margin-bottom: 2px;
+    }
+    .sp-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 2px;
+    }
+    .sp-row-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .sp-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      margin-bottom: 4px;
+    }
+    .sp-chip {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .sp-adx-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 5px;
+      margin-bottom: 4px;
+    }
+    .sp-adx-dots {
+      font-size: 9px;
+      flex-shrink: 0;
+      margin-top: 1px;
+      letter-spacing: 1px;
+    }
+    .sp-regime-badge {
+      text-align: center;
+      padding: 8px;
+      border-radius: 6px;
+    }
+    .sp-regime-text {
+      font-family: 'Bebas Neue', var(--font);
+      font-size: 22px;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    .sp-regime-sub {
+      font-size: 9px;
+      color: #555;
+      margin-top: 3px;
+    }
+    .sp-session-badge {
+      text-align: center;
+      padding: 6px 8px;
+      border-radius: 5px;
+    }
+    .sp-session-text {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+    }
   </style>
 </head>
 <body>
@@ -845,39 +918,57 @@
 
 <!-- TAB 1: SCANNER -->
 <div id="tab-scanner" class="tab-content active">
-  <div class="table-panel">
-    <table>
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          <th>Trend</th>
-          <th>Price</th>
-          <th>ADX</th>
-          <th>J</th>
-          <th>B%</th>
-          <th>S%</th>
-          <th style="text-align:center">GATES</th>
-          <th>Signal</th>
-        </tr>
-        <tr class="gates-subheader">
-          <td colspan="7"></td>
-          <td style="text-align:center;font-weight:700;color:#ffffff">T &middot; A &middot; D &middot; MA</td>
-          <td></td>
-        </tr>
-      </thead>
-      <tbody id="pair-tbody">
-        <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
-      </tbody>
-    </table>
+  <div class="scanner-layout">
+    <!-- Pair table -->
+    <div class="table-panel">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;width:54px">Symbol</th>
+            <th class="th-trend">
+              Trend
+              <br><span style="font-size:8px;font-weight:400;color:#333;letter-spacing:0.02em">●●● HIGH &middot; ●● STR &middot; ● REG</span>
+            </th>
+            <th>Price</th>
+            <th>Δ24H</th>
+            <th>ADX</th>
+            <th>J</th>
+            <th class="th-gates">GATES</th>
+            <th class="th-signal">Signal</th>
+          </tr>
+          <tr class="gates-subheader">
+            <td colspan="6"></td>
+            <td style="text-align:center;font-weight:700;color:#ffffff">T &middot; A &middot; D &middot; MA</td>
+            <td></td>
+          </tr>
+        </thead>
+        <tbody id="pair-tbody">
+          <tr class="pair-row-1"><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-    <!-- Market Snapshot Panel -->
-    <div class="snapshot-panel" id="snapshot-panel">
-      <div class="snapshot-header" onclick="toggleSnapshot()">
-        <span>MARKET SNAPSHOT</span>
-        <span class="snapshot-chevron" id="snapshot-chevron">▶</span>
+    <!-- Right side panel -->
+    <div class="side-panel" id="side-panel">
+      <div class="sp-section">
+        <div class="sp-title">Trend Bias</div>
+        <div id="sp-trend-bias"><span style="color:#333;font-size:10px">scanning…</span></div>
       </div>
-      <div class="snapshot-body" id="snapshot-body" style="display:none">
-        <div class="snapshot-grid" id="snapshot-content"></div>
+      <div class="sp-section">
+        <div class="sp-title">ADX Strength</div>
+        <div id="sp-adx-strength"><span style="color:#333;font-size:10px">—</span></div>
+      </div>
+      <div class="sp-section">
+        <div class="sp-title">Momentum J</div>
+        <div id="sp-momentum"><span style="color:#333;font-size:10px">—</span></div>
+      </div>
+      <div class="sp-section">
+        <div class="sp-title">BTC Regime</div>
+        <div id="sp-btc-regime"><span style="color:#333;font-size:10px">—</span></div>
+      </div>
+      <div class="sp-section">
+        <div class="sp-title">Session</div>
+        <div id="sp-session"><span style="color:#333;font-size:10px">—</span></div>
       </div>
     </div>
   </div>
@@ -887,7 +978,7 @@
 <div id="tab-alerts" class="tab-content">
   <div id="alerts-container">
     <div class="alerts-empty">
-      Scanning every 10s.<br>Alerts appear here when TC conditions are met twice.
+      Scanning every 20s.<br>Alerts appear here when all 4 conditions pass twice.
     </div>
   </div>
 </div>
