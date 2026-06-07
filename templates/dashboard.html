@@ -777,35 +777,38 @@
       position: fixed;
       bottom: 20px;
       right: 20px;
-      z-index: 100;
+      z-index: 1000;
       width: 36px;
       height: 36px;
       border-radius: 50%;
-      background: #111111;
-      border: 1px solid #333333;
-      color: #666666;
-      font-size: 16px;
+      background: #1c1c1c;
+      border: 1px solid #555555;
+      color: #aaaaaa;
+      font-size: 15px;
+      font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: border-color 0.15s, color 0.15s;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
       font-family: var(--font);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
     }
-    #ref-pill-btn:hover { border-color: #555555; color: #aaaaaa; }
+    #ref-pill-btn:hover { background: #252525; border-color: #888888; color: #ffffff; }
     #ref-pill-card {
       position: fixed;
       bottom: 64px;
       right: 20px;
-      z-index: 100;
+      z-index: 1000;
       width: 340px;
       background: #0d0d0d;
-      border: 1px solid #222222;
+      border: 1px solid #2a2a2a;
       border-radius: 8px;
       padding: 14px;
       display: none;
       overflow-y: auto;
       max-height: calc(100vh - 100px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.8);
     }
     #ref-pill-card.open { display: block; }
   </style>
