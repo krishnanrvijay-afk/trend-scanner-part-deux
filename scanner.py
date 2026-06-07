@@ -28,6 +28,7 @@ _cooldowns:       dict[str, float] = {}   # key → expiry timestamp
 _btc_regime:      str              = "Neutral"  # updated each BTC scan
 _last_known_good: dict[str, dict]  = {}   # symbol → last successful scan result
 _candle_cache:    dict[str, dict]  = {}   # "{symbol}_1h" → {candles, hour, last_ts}
+_funding_cache:   dict[str, Optional[float]] = {}  # symbol → latest funding rate
 
 CONFIRMED_SHOW_SECONDS = 30  # show ALERT state in signal column for this long
 
@@ -660,6 +661,10 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     df_1h  = pd.DataFrame(candles_1h_raw)
     df_5m  = pd.DataFrame(candles_5m_raw)  if len(candles_5m_raw)  >= 5 else None
     df_15m = pd.DataFrame(candles_15m_raw) if len(candles_15m_raw) >= 5 else None
+    j_5m_raw  = compute_stoch_kdj(df_5m,  k_period=9, d_period=3, smooth_k=3)[2] if df_5m  is not None else 50.0
+    j_15m_raw = compute_stoch_kdj(df_15m, k_period=9, d_period=3, smooth_k=3)[2] if df_15m is not None else 50.0
+    j_5m      = round(max(0.0, min(100.0, j_5m_raw)),  1)
+    j_15m     = round(max(0.0, min(100.0, j_15m_raw)), 1)
     if len(df_1h) < 61:
         lkg = _last_known_good.get(symbol)
         if lkg:
@@ -815,6 +820,9 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "trend_pill":     get_directional_trend_strength(adx_1h, trend),
         "adx":            round(adx_1h, 1),
         "j5":             j1h_clamped,   # kept as j5 for JS compatibility
+        "j_5m":           j_5m,
+        "j_15m":          j_15m,
+        "funding_rate":   _funding_cache.get(symbol),
         "bid_pct":        round(bid_pct, 1),
         "ask_pct":        round(ask_pct, 1),
         "bid_wall":       walls["bid_wall"],
@@ -838,6 +846,14 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
 
 async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
     """Returns (pair_states, new_alerts). Scans all pairs unconditionally."""
+    global _funding_cache
+    try:
+        meta_list = await client.get_universe_metadata()
+        _funding_cache = {m["symbol"]: m.get("funding_rate") for m in meta_list}
+        logger.info("[FUNDING] fetched rates for %d symbols", len(_funding_cache))
+    except Exception as e:
+        logger.warning("[FUNDING] metadata fetch failed: %s", e)
+
     results = []
     for i, sym in enumerate(PAIRS):
         if i > 0:
