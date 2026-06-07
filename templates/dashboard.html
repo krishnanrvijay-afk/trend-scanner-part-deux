@@ -173,8 +173,9 @@
 
     thead th {
       background: var(--surface2);
-      padding: 10px 12px;
+      padding: 10px 10px;
       text-align: right;
+      vertical-align: middle;
       font-size: 11px;
       font-weight: 700;
       letter-spacing: 1px;
@@ -184,7 +185,7 @@
       white-space: nowrap;
     }
     thead th:first-child { text-align: left; }
-    thead th.th-trend    { text-align: left; min-width: 130px; }
+    thead th.th-trend    { text-align: left; min-width: 115px; }
     thead th.th-gates    { text-align: center; }
     thead th.th-signal   { text-align: center; }
 
@@ -198,7 +199,7 @@
     tbody tr.pair-row-2 { border-bottom: 1px solid var(--border); }
 
     td {
-      padding: 10px 12px;
+      padding: 10px 10px;
       color: var(--text);
       white-space: nowrap;
       text-align: right;
@@ -481,11 +482,13 @@
       flex-shrink: 0;
     }
     .gates-subheader td {
-      padding: 2px 12px 3px;
+      padding: 2px 10px 3px;
       background: var(--surface2);
       border-bottom: 1px solid var(--border);
       font-size: 9px;
-      color: #444;
+      font-weight: 700;
+      color: #ffffff;
+      font-family: 'JetBrains Mono', monospace;
       letter-spacing: .05em;
       line-height: 1;
     }
@@ -683,7 +686,7 @@
 
     /* ── Right side panel ────────────────────────────────────── */
     .side-panel {
-      width: 200px;
+      width: 280px;
       flex-shrink: 0;
       background: #0a0c10;
       border-left: 1px solid var(--border);
@@ -702,11 +705,11 @@
       gap: 5px;
     }
     .sp-title {
-      font-size: 9px;
+      font-size: 11px;
       color: #ffffff;
       text-transform: uppercase;
-      letter-spacing: 0.1em;
-      font-weight: 400;
+      letter-spacing: 1.5px;
+      font-weight: 700;
       padding-bottom: 4px;
       border-bottom: 1px solid #1a1e28;
       margin-bottom: 2px;
@@ -718,8 +721,9 @@
       margin-bottom: 2px;
     }
     .sp-row-label {
-      font-size: 9px;
+      font-size: 12px;
       font-weight: 700;
+      color: #ffffff;
       letter-spacing: 0.04em;
     }
     .sp-chips {
@@ -729,9 +733,11 @@
       margin-bottom: 4px;
     }
     .sp-chip {
-      font-size: 9px;
+      font-size: 11px;
       font-weight: 700;
       letter-spacing: 0.03em;
+      padding: 3px 7px;
+      border-radius: 3px;
     }
     .sp-adx-row {
       display: flex;
@@ -740,35 +746,31 @@
       margin-bottom: 4px;
     }
     .sp-adx-dots {
-      font-size: 9px;
+      font-size: 11px;
+      font-weight: 700;
       flex-shrink: 0;
       margin-top: 1px;
       letter-spacing: 1px;
     }
     .sp-regime-badge {
       text-align: center;
-      padding: 8px;
+      padding: 12px;
       border-radius: 6px;
     }
     .sp-regime-text {
       font-family: 'Bebas Neue', var(--font);
-      font-size: 22px;
+      font-size: 28px;
       letter-spacing: 0.06em;
       line-height: 1;
     }
-    .sp-regime-sub {
-      font-size: 9px;
-      color: #555;
-      margin-top: 3px;
-    }
     .sp-session-badge {
       text-align: center;
-      padding: 6px 8px;
+      padding: 8px;
       border-radius: 5px;
     }
     .sp-session-text {
-      font-size: 12px;
-      font-weight: 800;
+      font-size: 13px;
+      font-weight: 700;
       letter-spacing: 0.06em;
     }
   </style>
@@ -933,13 +935,22 @@
       <table>
         <thead>
           <tr>
-            <th style="text-align:left;width:56px">SYM</th>
+            <th style="text-align:left;width:50px">SYM</th>
             <th class="th-trend">TREND</th>
-            <th style="text-align:right">PRICE<br><span style="font-size:8px;color:#555;font-weight:400;text-transform:none;letter-spacing:0">&Delta;24H</span></th>
-            <th style="text-align:left;width:165px">BUYERS &middot; SELLERS</th>
-            <th style="text-align:right;width:52px">ADX</th>
-            <th class="th-gates">GATES</th>
-            <th class="th-signal">SIGNAL</th>
+            <th style="text-align:right;width:120px">PRICE</th>
+            <th style="text-align:left;width:150px">BUYERS &middot; SELLERS</th>
+            <th style="text-align:right;width:48px">ADX</th>
+            <th class="th-gates" style="width:80px">GATES</th>
+            <th class="th-signal" style="width:90px">SIGNAL</th>
+          </tr>
+          <tr class="gates-subheader">
+            <td></td>
+            <td></td>
+            <td style="text-align:right">24H %</td>
+            <td style="text-align:center">% &middot; wall</td>
+            <td style="text-align:right">14P</td>
+            <td style="text-align:center">T &middot; A &middot; D &middot; J</td>
+            <td></td>
           </tr>
         </thead>
         <tbody id="pair-tbody">
