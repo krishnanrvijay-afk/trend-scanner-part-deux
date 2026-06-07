@@ -772,6 +772,42 @@
       font-weight: 700;
       letter-spacing: 0.06em;
     }
+    /* ── Reference pill ─────────────────────────────────── */
+    #ref-pill-btn {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 100;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #111111;
+      border: 1px solid #333333;
+      color: #666666;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.15s, color 0.15s;
+      font-family: var(--font);
+    }
+    #ref-pill-btn:hover { border-color: #555555; color: #aaaaaa; }
+    #ref-pill-card {
+      position: fixed;
+      bottom: 64px;
+      right: 20px;
+      z-index: 100;
+      width: 340px;
+      background: #0d0d0d;
+      border: 1px solid #222222;
+      border-radius: 8px;
+      padding: 14px;
+      display: none;
+      overflow-y: auto;
+      max-height: calc(100vh - 100px);
+    }
+    #ref-pill-card.open { display: block; }
   </style>
 </head>
 <body>
@@ -870,12 +906,13 @@
           <span class="hc-val" style="color:#00ff88" id="hc-signals">0</span>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:4px">
-        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,68,68,0.15);color:#ff4444;border:1px solid rgba(255,68,68,0.3)">&#9679;&#9679;&#9679; BEAR</span>
-        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.25)">&#9679;&#9679; STR</span>
-        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);color:#fff;border:1px solid #333">&#9679; REG</span>
-        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(0,255,136,0.12);color:#00ff88;border:1px solid rgba(0,255,136,0.3)">&#9679;&#9679;&#9679; BULL</span>
-        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(100,160,255,0.1);color:#66aaff;border:1px solid rgba(100,160,255,0.25)">&#9900; NEU</span>
+      <div style="border-top:1px solid #1a1a1a;padding-top:6px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+        <span style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;margin-right:2px">KEY</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(255,68,68,0.15);color:#ff4444;border:1px solid rgba(255,68,68,0.3)"><span style="letter-spacing:1px;text-shadow:0 0 5px rgba(255,68,68,0.8)">&#9679;&#9679;&#9679;</span>HIGH BEAR</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.25)"><span><span style="color:#ffaa00">&#9679;&#9679;</span><span style="color:#2a2a2a">&#9679;</span></span>STRONG</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.07);color:#fff;border:1px solid #333"><span><span style="color:#ffffff">&#9679;</span><span style="color:#2a2a2a">&#9679;&#9679;</span></span>REGULAR</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(0,255,136,0.12);color:#00ff88;border:1px solid rgba(0,255,136,0.3)"><span style="letter-spacing:1px;text-shadow:0 0 5px rgba(0,255,136,0.8)">&#9679;&#9679;&#9679;</span>HIGH BULL</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(100,160,255,0.1);color:#66aaff;border:1px solid rgba(100,160,255,0.25)"><span style="opacity:0.45">&#9679;&#9679;&#9679;</span>NEUTRAL</span>
       </div>
     </div>
   </div>
@@ -933,7 +970,7 @@
             <td style="text-align:right">24H %</td>
             <td style="text-align:center">% &middot; wall</td>
             <td style="text-align:right">14P</td>
-            <td style="text-align:right">20–80</td>
+            <td style="text-align:right">1H</td>
             <td style="text-align:center">T &middot; A &middot; D &middot; M</td>
             <td></td>
           </tr>
@@ -988,6 +1025,125 @@
 
 <!-- Error toast -->
 <div id="toast"></div>
+
+<!-- Reference pill -->
+<button id="ref-pill-btn" onclick="toggleRefPill()">?</button>
+<div id="ref-pill-card">
+  <!-- Card header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <span style="font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:2px;color:#555555">SIGNAL TIER REFERENCE</span>
+    <button onclick="toggleRefPill()" style="background:none;border:none;color:#555555;cursor:pointer;font-size:18px;line-height:1;padding:0;font-family:var(--font)">&#215;</button>
+  </div>
+  <div style="height:1px;background:#222222;margin-bottom:10px"></div>
+
+  <!-- S1: Trend Classification -->
+  <div style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px">TREND CLASSIFICATION</div>
+  <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:9px">
+    <div style="display:flex;gap:6px">
+      <span style="font-size:9px;color:#555555;min-width:58px;flex-shrink:0;padding-top:1px;letter-spacing:.04em">MA STACK</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">price &gt; ma10 &gt; ma30 &gt; ma60 = <span style="color:#fff;font-weight:700">BULL</span> &nbsp;·&nbsp; price &lt; ma10 &lt; ma30 &lt; ma60 = <span style="color:#fff;font-weight:700">BEAR</span> &nbsp;·&nbsp; else = <span style="color:#fff;font-weight:700">NEUTRAL</span></span>
+    </div>
+    <div style="display:flex;gap:6px">
+      <span style="font-size:9px;color:#555555;min-width:58px;flex-shrink:0;padding-top:1px;letter-spacing:.04em">STRENGTH</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">ADX &#8805;60 = <span style="color:#fff;font-weight:700">HIGH PROB</span> &nbsp;·&nbsp; 40&#8211;59 = <span style="color:#fff;font-weight:700">STRONG</span> &nbsp;·&nbsp; 25&#8211;39 = <span style="color:#fff;font-weight:700">REGULAR</span> &nbsp;·&nbsp; &lt;25 = <span style="color:#fff;font-weight:700">NEUTRAL</span></span>
+    </div>
+  </div>
+  <div style="height:1px;background:#1a1a1a;margin-bottom:9px"></div>
+
+  <!-- S2: Tiers -->
+  <div style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px">TIERS &middot; ORDER &middot; LEVERAGE &middot; TARGETS</div>
+  <!-- HIGH BEAR -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px;color:#ff4444;text-shadow:0 0 4px rgba(255,68,68,0.7)">&#9679;&#9679;&#9679;</div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ff4444">HIGH BEAR</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX &#8805;60</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">MKT 25x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2 &middot; TP3</div>
+  </div>
+  <!-- STRONG BEAR -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffaa00">&#9679;&#9679;</span><span style="color:#2a2a2a">&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffaa00">STRONG BEAR</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 40&#8211;59</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 15x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2</div>
+  </div>
+  <!-- REGULAR BEAR -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffffff">&#9679;</span><span style="color:#2a2a2a">&#9679;&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff">REGULAR BEAR</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 25&#8211;39</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 10x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1</div>
+  </div>
+  <!-- divider -->
+  <div style="height:1px;background:#1a1a1a;margin:4px 0"></div>
+  <!-- HIGH BULL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px;color:#00ff88;text-shadow:0 0 4px rgba(0,255,136,0.7)">&#9679;&#9679;&#9679;</div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#00ff88">HIGH BULL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX &#8805;60</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">MKT 25x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2 &middot; TP3</div>
+  </div>
+  <!-- STRONG BULL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffaa00">&#9679;&#9679;</span><span style="color:#2a2a2a">&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffaa00">STRONG BULL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 40&#8211;59</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 15x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2</div>
+  </div>
+  <!-- REGULAR BULL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffffff">&#9679;</span><span style="color:#2a2a2a">&#9679;&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff">REGULAR BULL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 25&#8211;39</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 10x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1</div>
+  </div>
+  <!-- divider -->
+  <div style="height:1px;background:#1a1a1a;margin:4px 0"></div>
+  <!-- NEUTRAL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px;color:#66aaff;opacity:0.45">&#9679;&#9679;&#9679;</div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#66aaff">NEUTRAL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX &lt;25</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#555555">NO SIG</div>
+    <div style="font-size:9px;font-weight:700;color:#555555">—</div>
+  </div>
+
+  <div style="height:1px;background:#1a1a1a;margin:8px 0"></div>
+
+  <!-- S3: Gate Conditions -->
+  <div style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px">GATE CONDITIONS (ALL 4 MUST PASS)</div>
+  <div style="display:flex;flex-direction:column;gap:5px">
+    <!-- T -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">T</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">TREND &nbsp; MA stack must be <span style="color:#00ff88;font-weight:700">BULL</span> or <span style="color:#ff4444;font-weight:700">BEAR</span></span>
+    </div>
+    <!-- A -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">A</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">ADX &nbsp; &#8805;<span style="color:#ffaa00;font-weight:700">25</span> minimum &nbsp;·&nbsp; overrides: NEAR <span style="color:#ffaa00;font-weight:700">42</span> &nbsp; SUI <span style="color:#ffaa00;font-weight:700">40</span></span>
+    </div>
+    <!-- D -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">D</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">DEPTH &nbsp; ask% &#8805;<span style="color:#ffaa00;font-weight:700">60%</span> SHORT &nbsp;·&nbsp; bid% &#8805;<span style="color:#ffaa00;font-weight:700">60%</span> LONG</span>
+    </div>
+    <!-- J -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">J</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">KDJ J on 1h &nbsp;·&nbsp; ADX&#8805;50: J&gt;<span style="color:#ffaa00;font-weight:700">55</span> or J&lt;<span style="color:#ffaa00;font-weight:700">45</span> &nbsp;·&nbsp; ADX&lt;50: J&gt;<span style="color:#ff4444;font-weight:700">80</span> SHORT &nbsp; J&lt;<span style="color:#00ff88;font-weight:700">20</span> LONG</span>
+    </div>
+  </div>
+</div>
 
 <script src="/static/dashboard.js"></script>
 </body>
