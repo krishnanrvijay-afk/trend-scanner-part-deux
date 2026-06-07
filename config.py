@@ -40,3 +40,11 @@ PAIR_ADX_OVERRIDES = {"NEAR": 42, "SUI": 40}
 STALE_ALERT_SECONDS = 5400    # 90 minutes
 
 HL_API_URL = "https://api.hyperliquid.xyz/info"
+
+ORDER_TYPE_HIGH_PROB   = "MARKET"
+ORDER_TYPE_STRONG      = "LIMIT"
+ORDER_TYPE_REGULAR     = "LIMIT"
+LIMIT_ORDER_BUFFER_PCT = 0.001        # 0.1% buffer from current price for limit orders
+STRONG_CANCEL_CYCLES   = 2            # cancel STRONG limit after 2 scan cycles (~40s)
+REGULAR_CANCEL_CYCLES  = 3            # cancel REGULAR limit after 3 scan cycles (~60s)
+SL_ORDER_TYPE          = "STOP_MARKET"
