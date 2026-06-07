@@ -3,6 +3,7 @@
 let state = null;
 let lastScanCount = -1;
 let prevAlertTradeCount = -1;
+let activeMASymbol = null;
 const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
 
 // Tier-based cancel cycle counts (must match config.py)
@@ -434,7 +435,9 @@ function buildPairRowHtml(p) {
   const change24h = p.change_24h ?? null;
 
   const isStale  = p.data_stale === true;
-  const symHtml  = `<span class="sym" style="${isStale ? 'color:#555' : ''}">${p.symbol}${isStale ? '<span style="font-size:7px;color:#444;margin-left:2px">~</span>' : ''}</span>`;
+  const isActive = p.symbol === activeMASymbol;
+  const symStyle = isStale ? 'color:#555;cursor:pointer' : 'cursor:pointer';
+  const symHtml  = `<span class="sym" style="${symStyle}" onclick="handleSymClick('${p.symbol}')">${p.symbol}${isStale ? '<span style="font-size:7px;color:#444;margin-left:2px">~</span>' : ''}</span>`;
   const trendPill = buildTrendPill(p.trend_pill || 'NEUTRAL');
 
   // Price column: stacked price + 24H change
@@ -516,7 +519,7 @@ function buildPairRowHtml(p) {
     `<span class="gate-dot" style="background:${gColor(gs.ma_pass)}"></span>` +
     `</div>`;
 
-  return `<tr data-symbol="${p.symbol}" class="pair-row-1">` +
+  return `<tr data-symbol="${p.symbol}" class="pair-row-1${isActive ? ' active-sym' : ''}">` +
     `<td style="text-align:left">${symHtml}</td>` +
     `<td style="text-align:left">${trendPill}</td>` +
     `<td class="price-cell" style="text-align:right">${priceHtml}</td>` +
@@ -1216,11 +1219,150 @@ async function clearStaleAlerts() {
 
 // ── Render all ────────────────────────────────────────────────────────────────
 
+// ── MA Stack Overlay ─────────────────────────────────────────────────────────
+
+const MA_STACK_INFO = {
+  BULL:    { sym: '▲', label: 'BULLISH STACK',  color: '#00ff88', bg: 'rgba(0,255,136,0.10)',   border: 'rgba(0,255,136,0.30)'  },
+  BEAR:    { sym: '▼', label: 'BEARISH STACK',  color: '#ff4444', bg: 'rgba(255,68,68,0.10)',    border: 'rgba(255,68,68,0.30)'  },
+  MIXED:   { sym: '⟷', label: 'MIXED',          color: '#ffaa00', bg: 'rgba(255,170,0,0.10)',   border: 'rgba(255,170,0,0.30)'  },
+  NEUTRAL: { sym: '○', label: 'NEUTRAL',         color: '#66aaff', bg: 'rgba(100,160,255,0.10)', border: 'rgba(100,160,255,0.30)' },
+};
+
+function handleSymClick(sym) {
+  if (activeMASymbol === sym) hideMAOverlay();
+  else showMAOverlay(sym);
+}
+
+function showMAOverlay(sym) {
+  activeMASymbol = sym;
+  const overlay   = document.getElementById('ma-overlay');
+  const sidePanel = document.getElementById('side-panel');
+  if (sidePanel) sidePanel.style.display = 'none';
+  if (overlay)   overlay.style.display = 'flex';
+  renderMAOverlay(sym);
+  renderPairTable();
+}
+
+function hideMAOverlay() {
+  activeMASymbol = null;
+  const overlay   = document.getElementById('ma-overlay');
+  const sidePanel = document.getElementById('side-panel');
+  if (overlay)   overlay.style.display = 'none';
+  if (sidePanel) sidePanel.style.display = '';
+  renderPairTable();
+}
+
+function buildMATFBlock(tf, d) {
+  const { ma5, ma10, ma30, ma60, ma5_dir, ma10_dir, ma30_dir, ma60_dir, stack: tfStack, price: pv } = d || {};
+  const si  = MA_STACK_INFO[tfStack] || MA_STACK_INFO.NEUTRAL;
+  const p   = pv || 0;
+
+  const vals = [ma5, ma10, ma30, ma60].filter(v => v != null);
+  const minV = vals.length ? Math.min(...vals) : 0;
+  const maxV = vals.length ? Math.max(...vals) : 1;
+  const span = maxV - minV || 1;
+  const barW = v => v == null ? 40 : Math.round(40 + (v - minV) / span * 55);
+
+  const rowC = (a, b) => {
+    if (a == null || b == null) return '#555555';
+    return a > b ? '#00ff88' : a < b ? '#ff4444' : '#888888';
+  };
+  const dirSym = d => d === 'UP' ? '↑' : d === 'DOWN' ? '↓' : '→';
+
+  const maRows = [
+    { label: 'MA5',  val: ma5,  dir: ma5_dir,  color: rowC(p,   ma5)  },
+    { label: 'MA10', val: ma10, dir: ma10_dir, color: rowC(ma5, ma10) },
+    { label: 'MA30', val: ma30, dir: ma30_dir, color: rowC(ma10, ma30) },
+    { label: 'MA60', val: ma60, dir: ma60_dir, color: rowC(ma30, ma60) },
+  ];
+
+  const rowsHtml = maRows.map(r =>
+    `<div class="ma-row" style="color:${r.color}">` +
+    `<span class="ma-row-label">${r.label}</span>` +
+    `<div class="ma-bar-wrap"><div class="ma-bar" style="width:${barW(r.val)}%;background:${r.color}"></div></div>` +
+    `<span class="ma-row-val">${r.val != null ? fmtPrice(r.val) : '—'}</span>` +
+    `<span class="ma-row-dir">${dirSym(r.dir)}</span>` +
+    `</div>`
+  ).join('');
+
+  const badgeHtml = `<div class="ma-stack-badge" style="background:${si.bg};border:1px solid ${si.border};color:${si.color}">${si.sym} ${si.label}</div>`;
+
+  const dotColor = tf.key === '5m' ? '#ffaa00' : tf.key === '15m' ? '#66aaff' : '#00ff88';
+  const dot = `<span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${dotColor};margin-right:6px;vertical-align:middle;flex-shrink:0"></span>`;
+
+  return `<div class="ma-tf-block">` +
+    `<div class="ma-tf-label">${dot}<span style="font-size:9px;font-weight:700;color:#ffffff;text-transform:uppercase;letter-spacing:1px">${tf.label}</span></div>` +
+    rowsHtml + badgeHtml +
+    `</div>`;
+}
+
+function buildMAAlignmentSummary(mad, trend) {
+  const h1Stack = (mad['1h'] || {}).stack || 'NEUTRAL';
+  const tfs = [
+    { key: '5m', label: '5M' }, { key: '15m', label: '15M' }, { key: '1h', label: '1H' },
+  ];
+
+  const rows = tfs.map(tf => {
+    const d     = mad[tf.key] || {};
+    const stack = d.stack || 'NEUTRAL';
+    const si    = MA_STACK_INFO[stack] || MA_STACK_INFO.NEUTRAL;
+
+    let gateHtml;
+    if (tf.key === '1h') {
+      const pass = (stack === 'BULL' && trend === 'Strong Bull') || (stack === 'BEAR' && trend === 'Strong Bear');
+      gateHtml = pass
+        ? `<span style="color:#00ff88;font-size:9px;font-weight:700;font-family:'JetBrains Mono',monospace">PASS</span>`
+        : `<span style="color:#444444;font-size:9px;font-family:'JetBrains Mono',monospace">FAIL</span>`;
+    } else {
+      const aligns = stack === h1Stack && (stack === 'BULL' || stack === 'BEAR');
+      gateHtml = aligns
+        ? `<span style="color:#ffaa00;font-size:9px;font-weight:700;font-family:'JetBrains Mono',monospace">ALIGNS</span>`
+        : `<span style="color:#444444;font-size:9px;font-family:'JetBrains Mono',monospace">—</span>`;
+    }
+
+    return `<div style="display:flex;align-items:center;height:22px">` +
+      `<span style="width:28px;font-size:9px;color:#555555;flex-shrink:0;font-family:'JetBrains Mono',monospace">${tf.label}</span>` +
+      `<span style="flex:1;font-size:9px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${si.color}">${si.sym} ${si.label}</span>` +
+      gateHtml + `</div>`;
+  }).join('');
+
+  return `<div class="ma-align-section">` +
+    `<div style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px">ALIGNMENT SUMMARY</div>` +
+    rows + `</div>`;
+}
+
+function renderMAOverlay(sym) {
+  if (!state || !sym) return;
+  const overlay = document.getElementById('ma-overlay');
+  if (!overlay) return;
+
+  const pairs = state.pair_states || [];
+  const p = pairs.find(x => x.symbol === sym);
+  if (!p) return;
+
+  const nameEl = overlay.querySelector('.ma-overlay-sym');
+  if (nameEl) nameEl.textContent = sym;
+
+  const mad = ((p.ma_data || {}).timeframes) || {};
+  const trend = p.trend || 'Neutral';
+
+  const tfs = [
+    { key: '5m', label: '5M' }, { key: '15m', label: '15M' }, { key: '1h', label: '1H' },
+  ];
+
+  const blocksHtml = tfs.map(tf => buildMATFBlock(tf, mad[tf.key] || {})).join('');
+  const alignHtml  = buildMAAlignmentSummary(mad, trend);
+
+  const contentEl = overlay.querySelector('.ma-overlay-content');
+  if (contentEl) contentEl.innerHTML = blocksHtml + alignHtml;
+}
+
 function renderAll() {
   renderHeader();
   renderScanPulse();
   renderPairTable();
-  renderSidePanel();
+  if (activeMASymbol) renderMAOverlay(activeMASymbol);
+  else renderSidePanel();
   renderAlerts();
   renderTradeLog();
   updateAlertBadge();
