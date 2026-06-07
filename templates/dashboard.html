@@ -350,19 +350,6 @@
     .cap-yellow { background: var(--yellow); }
     .cap-red    { background: var(--red); }
 
-    /* ── Scan pulse strip ───────────────────────────────────── */
-    .scan-pulse-strip {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 5px 20px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-family: var(--font);
-      font-size: 11px;
-      white-space: nowrap;
-      overflow: hidden;
-    }
     .pulse-dot {
       width: 8px;
       height: 8px;
@@ -558,11 +545,11 @@
     .tab-content { display: none; }
     .tab-content.active { display: block; }
     .tab-actions {
-      margin-left: auto;
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 0;
+      padding: 6px 0 6px 8px;
+      flex-shrink: 0;
     }
     @keyframes tab-label-flash {
       0%, 100% { color: var(--muted); }
@@ -795,25 +782,41 @@
       border-top: 1px solid #1a1a1a;
       flex-shrink: 0;
     }
-    /* ── Filter bar ───────────────────────────────────────── */
-    #filter-bar {
-      display:flex; flex-direction:row; gap:5px; padding:5px 8px;
-      overflow-x:auto; scrollbar-width:none;
-      background:var(--surface); border-bottom:1px solid var(--border);
+    /* ── Tab filter pills ─────────────────────────────────── */
+    .tab-filter-pills {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 0 5px 8px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      flex-shrink: 1;
+      min-width: 0;
     }
-    #filter-bar::-webkit-scrollbar { display:none; }
-    .filter-pill {
-      display:inline-flex; align-items:center; padding:3px 10px;
-      border:1px solid #222; border-radius:12px;
-      font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700;
-      color:#555; cursor:pointer; white-space:nowrap; flex-shrink:0;
-      background:transparent; letter-spacing:0.4px;
+    .tab-filter-pills::-webkit-scrollbar { display: none; }
+    .tfp {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700;
+      padding: 3px 9px; border-radius: 10px; border: 1px solid;
+      cursor: pointer; flex-shrink: 0; letter-spacing: 0.3px;
+      display: inline-flex; align-items: center; gap: 4px;
+      opacity: 0.7; transition: opacity 0.15s;
     }
-    .filter-pill.active { background:#1a1a1a; border-color:#444; color:#fff; }
-    .filter-pill.fp-bear   { color:#ff4444; border-color:rgba(255,68,68,0.3); }
-    .filter-pill.fp-bull   { color:#00ff88; border-color:rgba(0,255,136,0.3); }
-    .filter-pill.fp-alerts { color:#ffaa00; border-color:rgba(255,170,0,0.3); }
-    .filter-pill.fp-trades { color:#00ff88; border-color:rgba(0,255,136,0.3); }
+    .tfp.active { border-color: #555 !important; opacity: 1; }
+    .tfp[data-filter="all"]       { border-color:#333; color:#fff; background:#1a1a1a; }
+    .tfp[data-filter="alerts"]    { border-color:rgba(255,170,0,0.3); color:#ffaa00; background:rgba(255,170,0,0.07); }
+    .tfp[data-filter="trades"]    { border-color:rgba(0,255,136,0.3); color:#00ff88; background:rgba(0,255,136,0.07); }
+    .tfp[data-filter="bear-high"] { border-color:rgba(255,68,68,0.3); color:#ff4444; background:rgba(255,68,68,0.08); }
+    .tfp[data-filter="strong"]    { border-color:rgba(255,170,0,0.25); color:#ffaa00; background:rgba(255,170,0,0.07); }
+    .tfp[data-filter="regular"]   { border-color:#2a2a2a; color:#fff; background:rgba(255,255,255,0.04); }
+    .tfp[data-filter="bull-high"] { border-color:rgba(0,255,136,0.3); color:#00ff88; background:rgba(0,255,136,0.08); }
+    .tfp[data-filter="neutral"]   { border-color:rgba(100,160,255,0.25); color:#66aaff; background:rgba(100,160,255,0.07); }
+    .tfp-dots { display:inline-flex; gap:2px; align-items:center; }
+    .tfp-dots span { width:5px; height:5px; border-radius:50%; display:inline-block; }
+    .tfp-dots-red   span { background:#ff4444; box-shadow:0 0 3px rgba(255,68,68,0.8); }
+    .tfp-dots-green span { background:#00ff88; box-shadow:0 0 3px rgba(0,255,136,0.8); }
+    .tfp-dots-blue  span { background:rgba(100,160,255,0.4); border:1px solid rgba(100,160,255,0.3); }
     /* ── Card grid ────────────────────────────────────────── */
     #card-grid {
       flex:1; min-width:0;
@@ -976,43 +979,24 @@
           <span class="hc-val" style="color:#00ff88" id="hc-signals">0</span>
         </div>
       </div>
-      <div style="border-top:1px solid #1a1a1a;padding-top:6px;display:flex;align-items:center;gap:5px;flex-wrap:wrap">
-        <span style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;margin-right:2px">KEY</span>
-        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(255,68,68,0.15);color:#ff4444;border:1px solid rgba(255,68,68,0.3)"><span style="letter-spacing:1px;text-shadow:0 0 5px rgba(255,68,68,0.8)">&#9679;&#9679;&#9679;</span>HIGH BEAR</span>
-        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.25)"><span><span style="color:#ffaa00">&#9679;&#9679;</span><span style="color:#2a2a2a">&#9679;</span></span>STRONG</span>
-        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.07);color:#fff;border:1px solid #333"><span><span style="color:#ffffff">&#9679;</span><span style="color:#2a2a2a">&#9679;&#9679;</span></span>REGULAR</span>
-        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(0,255,136,0.12);color:#00ff88;border:1px solid rgba(0,255,136,0.3)"><span style="letter-spacing:1px;text-shadow:0 0 5px rgba(0,255,136,0.8)">&#9679;&#9679;&#9679;</span>HIGH BULL</span>
-        <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;background:rgba(100,160,255,0.1);color:#66aaff;border:1px solid rgba(100,160,255,0.25)"><span style="opacity:0.45">&#9679;&#9679;&#9679;</span>NEUTRAL</span>
+      <div style="border-top:1px solid #1a1a1a;margin-top:6px;padding-top:6px;display:flex;align-items:center;gap:5px;flex-wrap:nowrap;overflow:hidden">
+        <span class="pulse-dot" id="pulse-dot" style="width:6px;height:6px;background:#333;flex-shrink:0"></span>
+        <span style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;flex-shrink:0">SCAN</span>
+        <span id="pulse-scan-num" style="color:#ffaa00;font-weight:700;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">—</span>
+        <span style="color:#333;flex-shrink:0">·</span>
+        <span id="pulse-ago" style="color:#ffaa00;font-weight:700;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">—</span>
+        <span style="color:#333;flex-shrink:0">·</span>
+        <span style="color:#ffffff;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">12 pairs</span>
+        <span style="color:#333;flex-shrink:0">·</span>
+        <span id="pulse-signals" style="color:#00ff88;font-weight:700;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">—</span>
+        <span style="font-size:10px;color:#555;font-family:'JetBrains Mono',monospace">signals</span>
       </div>
     </div>
   </div>
 </header>
 
-<!-- Scan pulse strip -->
-<div class="scan-pulse-strip">
-  <span class="pulse-dot" id="pulse-dot"></span>
-  <span style="color:#ffffff">SCAN</span>&nbsp;<span id="pulse-scan-num" style="color:#00ff88;font-weight:bold">—</span>
-  <span style="color:#444444;margin:0 5px">·</span>
-  <span id="pulse-ago" style="color:#ffaa00;font-weight:bold">—</span>
-  <span style="color:#444444;margin:0 5px">·</span>
-  <span style="color:#ffffff">12 pairs</span>
-  <span style="color:#444444;margin:0 5px">·</span>
-  <span id="pulse-signals" style="color:#00ff88;font-weight:bold">—</span>&nbsp;<span style="color:#ffffff">signals</span>
-</div>
-
 <!-- Market strip: compact snapshot row shown on <900px screens -->
 <div id="market-strip"></div>
-
-<!-- Filter bar -->
-<div id="filter-bar">
-  <button class="filter-pill active" data-filter="all"    onclick="setFilter('all')">ALL <span id="filter-count">12</span></button>
-  <button class="filter-pill fp-bear"  data-filter="bear"   onclick="setFilter('bear')">BEAR</button>
-  <button class="filter-pill fp-bull"  data-filter="bull"   onclick="setFilter('bull')">BULL</button>
-  <button class="filter-pill fp-alerts" data-filter="alerts" onclick="setFilter('alerts')">⏳ ALERTS</button>
-  <button class="filter-pill fp-trades" data-filter="trades" onclick="setFilter('trades')">● TRADES</button>
-  <button class="filter-pill" data-filter="hp"     onclick="setFilter('hp')">HIGH PROB</button>
-  <button class="filter-pill" data-filter="strong" onclick="setFilter('strong')">STRONG</button>
-</div>
 
 <!-- Tab bar -->
 <div class="tab-bar">
@@ -1022,6 +1006,17 @@
     <span id="alert-badge" class="tab-badge" style="display:none"></span>
   </button>
   <button id="tab-btn-tradelog" class="tab-btn"        onclick="switchTab('tradelog')">TRADE LOG</button>
+  <!-- Filter pills — right-aligned in tab row -->
+  <div class="tab-filter-pills" id="tab-filter-pills">
+    <button class="tfp active" data-filter="all"       onclick="setFilter('all')">ALL <span id="filter-count">12</span></button>
+    <button class="tfp"        data-filter="alerts"    onclick="setFilter('alerts')">⏳ ALERTS</button>
+    <button class="tfp"        data-filter="trades"    onclick="setFilter('trades')">● TRADES</button>
+    <button class="tfp"        data-filter="bear-high" onclick="setFilter('bear-high')"><span class="tfp-dots tfp-dots-red"><span></span><span></span><span></span></span>HIGH BEAR</button>
+    <button class="tfp"        data-filter="strong"    onclick="setFilter('strong')"><span class="tfp-dots"><span style="background:#ffaa00"></span><span style="background:#ffaa00"></span><span style="background:rgba(255,170,0,0.2);border:1px solid rgba(255,170,0,0.3)"></span></span>STRONG</button>
+    <button class="tfp"        data-filter="regular"   onclick="setFilter('regular')"><span class="tfp-dots"><span style="background:#fff"></span><span style="background:rgba(255,255,255,0.1);border:1px solid #333"></span><span style="background:rgba(255,255,255,0.1);border:1px solid #333"></span></span>REGULAR</button>
+    <button class="tfp"        data-filter="bull-high" onclick="setFilter('bull-high')"><span class="tfp-dots tfp-dots-green"><span></span><span></span><span></span></span>HIGH BULL</button>
+    <button class="tfp"        data-filter="neutral"   onclick="setFilter('neutral')"><span class="tfp-dots tfp-dots-blue"><span></span><span></span><span></span></span>NEUTRAL</button>
+  </div>
   <div class="tab-actions" id="tradelog-tab-actions" style="display:none">
     <a href="/api/tradelog/csv" class="pill pill-download" style="text-decoration:none;padding:5px 12px;font-size:10px">↓ CSV</a>
     <button id="clear-log-btn" class="pill pill-clear" style="padding:5px 12px;font-size:10px" onclick="clearTradeLog()">✕ CLEAR LOG</button>
