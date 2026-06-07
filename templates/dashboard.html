@@ -444,7 +444,6 @@
       padding: 5px 20px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 10px;
       font-family: var(--font);
       font-size: 11px;
@@ -826,7 +825,7 @@
       <span class="hc-sep"></span>
       <div class="hc-item">
         <span class="hc-label">MARGIN</span>
-        <span class="hc-val" id="hc-margin">— USDC</span>
+        <span class="hc-val" style="color:#ffffff">$2,000.00</span>
       </div>
       <span class="hc-sep"></span>
       <div class="hc-item">
@@ -835,24 +834,8 @@
       </div>
       <span class="hc-sep"></span>
       <div class="hc-item">
-        <span class="hc-label">SLOTS</span>
-        <span class="hc-val" id="hc-slots" style="color:#00ff88">0/2</span>
-      </div>
-      <span class="hc-sep"></span>
-      <div class="hc-item">
         <span class="hc-label">DAY P&amp;L</span>
         <span class="hc-val" id="hc-daily-pnl" style="color:#888">—</span>
-      </div>
-      <span class="hc-sep"></span>
-      <div class="hc-item">
-        <span class="hc-label">SESSION</span>
-        <span class="hc-val" id="hc-session" style="color:#00ff88">ALWAYS OPEN</span>
-      </div>
-      <span class="hc-sep"></span>
-      <div class="hc-item">
-        <span class="hc-label">CAP</span>
-        <span class="hc-val" style="color:#00ff88" id="hc-cap-pct">0%</span>
-        <div class="hc-capbar-bg"><div class="hc-capbar-fill cap-green" id="hc-cap-bar" style="width:0%"></div></div>
       </div>
       <span class="hc-sep"></span>
       <div class="hc-item">
@@ -865,25 +848,34 @@
       </div>
     </div>
     <!-- RIGHT: Market Snapshot summary (always-visible) -->
-    <div class="hcard">
-      <div class="hc-item">
-        <span class="hc-label">TREND</span>
-        <span class="hc-val" id="hc-trend-val">—</span>
+    <div class="hcard" style="flex-direction:column;align-items:flex-start;gap:6px;padding:7px 14px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0">
+        <div class="hc-item" style="padding-left:0">
+          <span class="hc-label">TREND</span>
+          <span class="hc-val" id="hc-trend-val">—</span>
+        </div>
+        <span class="hc-sep"></span>
+        <div class="hc-item">
+          <span class="hc-label">BTC</span>
+          <span class="hc-val" id="hc-btc-regime" style="color:#888">—</span>
+        </div>
+        <span class="hc-sep"></span>
+        <div class="hc-item">
+          <span class="hc-label">ADX&gt;50</span>
+          <span class="hc-val" id="hc-adx-strong">—</span>
+        </div>
+        <span class="hc-sep"></span>
+        <div class="hc-item">
+          <span class="hc-label">SIGNALS</span>
+          <span class="hc-val" style="color:#00ff88" id="hc-signals">0</span>
+        </div>
       </div>
-      <span class="hc-sep"></span>
-      <div class="hc-item">
-        <span class="hc-label">BTC</span>
-        <span class="hc-val" id="hc-btc-regime" style="color:#888">—</span>
-      </div>
-      <span class="hc-sep"></span>
-      <div class="hc-item">
-        <span class="hc-label">ADX&gt;50</span>
-        <span class="hc-val" id="hc-adx-strong">—</span>
-      </div>
-      <span class="hc-sep"></span>
-      <div class="hc-item">
-        <span class="hc-label">SIGNALS</span>
-        <span class="hc-val" style="color:#00ff88" id="hc-signals">0</span>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,68,68,0.15);color:#ff4444;border:1px solid rgba(255,68,68,0.3)">&#9679;&#9679;&#9679; BEAR</span>
+        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.25)">&#9679;&#9679; STR</span>
+        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);color:#fff;border:1px solid #333">&#9679; REG</span>
+        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(0,255,136,0.12);color:#00ff88;border:1px solid rgba(0,255,136,0.3)">&#9679;&#9679;&#9679; BULL</span>
+        <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(100,160,255,0.1);color:#66aaff;border:1px solid rgba(100,160,255,0.25)">&#9900; NEU</span>
       </div>
     </div>
   </div>
@@ -891,23 +883,14 @@
 
 <!-- Scan pulse strip -->
 <div class="scan-pulse-strip">
-  <span style="display:flex;align-items:center;gap:6px">
-    <span class="pulse-dot" id="pulse-dot"></span>
-    <span style="color:#ffffff">SCAN</span>&nbsp;<span id="pulse-scan-num" style="color:#00ff88;font-weight:bold">—</span>
-    <span style="color:#444444;margin:0 5px">·</span>
-    <span id="pulse-ago" style="color:#ffaa00;font-weight:bold">—</span>
-    <span style="color:#444444;margin:0 5px">·</span>
-    <span style="color:#ffffff">12 pairs</span>
-    <span style="color:#444444;margin:0 5px">·</span>
-    <span id="pulse-signals" style="color:#00ff88;font-weight:bold">—</span>&nbsp;<span style="color:#ffffff">signals</span>
-  </span>
-  <span style="display:flex;align-items:center;gap:4px">
-    <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,68,68,0.15);color:#ff4444;border:1px solid rgba(255,68,68,0.3)">&#9679;&#9679;&#9679; BEAR</span>
-    <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.25)">&#9679;&#9679; STR</span>
-    <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);color:#fff;border:1px solid #333">&#9679; REG</span>
-    <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(0,255,136,0.12);color:#00ff88;border:1px solid rgba(0,255,136,0.3)">&#9679;&#9679;&#9679; BULL</span>
-    <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(100,160,255,0.1);color:#66aaff;border:1px solid rgba(100,160,255,0.25)">&#9900; NEU</span>
-  </span>
+  <span class="pulse-dot" id="pulse-dot"></span>
+  <span style="color:#ffffff">SCAN</span>&nbsp;<span id="pulse-scan-num" style="color:#00ff88;font-weight:bold">—</span>
+  <span style="color:#444444;margin:0 5px">·</span>
+  <span id="pulse-ago" style="color:#ffaa00;font-weight:bold">—</span>
+  <span style="color:#444444;margin:0 5px">·</span>
+  <span style="color:#ffffff">12 pairs</span>
+  <span style="color:#444444;margin:0 5px">·</span>
+  <span id="pulse-signals" style="color:#00ff88;font-weight:bold">—</span>&nbsp;<span style="color:#ffffff">signals</span>
 </div>
 
 <!-- Tab bar -->
@@ -940,6 +923,7 @@
             <th style="text-align:right;width:115px">PRICE</th>
             <th style="text-align:left;width:148px">BUYERS &middot; SELLERS</th>
             <th style="text-align:right;width:48px">ADX</th>
+            <th style="text-align:right;width:44px">J</th>
             <th class="th-gates" style="width:80px">GATES</th>
             <th class="th-signal" style="width:90px">SIGNAL</th>
           </tr>
@@ -949,12 +933,13 @@
             <td style="text-align:right">24H %</td>
             <td style="text-align:center">% &middot; wall</td>
             <td style="text-align:right">14P</td>
-            <td style="text-align:center">T &middot; A &middot; D &middot; J</td>
+            <td style="text-align:right">20–80</td>
+            <td style="text-align:center">T &middot; A &middot; D &middot; M</td>
             <td></td>
           </tr>
         </thead>
         <tbody id="pair-tbody">
-          <tr class="pair-row-1"><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
+          <tr class="pair-row-1"><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
         </tbody>
       </table>
     </div>
