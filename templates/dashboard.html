@@ -778,26 +778,24 @@
       bottom: 20px;
       right: 20px;
       z-index: 1000;
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: #1c1c1c;
-      border: 1px solid #555555;
-      color: #aaaaaa;
-      font-size: 15px;
+      background: #111111;
+      border: 1px solid #333333;
+      border-radius: 20px;
+      padding: 6px 14px;
+      color: #ffffff;
+      font-size: 10px;
       font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 1px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: border-color 0.15s, color 0.15s, background 0.15s;
-      font-family: var(--font);
+      transition: border-color 0.15s, color 0.15s;
       box-shadow: 0 2px 8px rgba(0,0,0,0.6);
     }
-    #ref-pill-btn:hover { background: #252525; border-color: #888888; color: #ffffff; }
+    #ref-pill-btn:hover { border-color: #555555; color: #aaaaaa; }
     #ref-pill-card {
       position: fixed;
-      bottom: 64px;
+      bottom: 54px;
       right: 20px;
       z-index: 1000;
       width: 340px;
@@ -811,6 +809,106 @@
       box-shadow: 0 4px 24px rgba(0,0,0,0.8);
     }
     #ref-pill-card.open { display: block; }
+    /* ── MA Stack Overlay ────────────────────────────────── */
+    @keyframes maSlideIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    #ma-overlay { animation: maSlideIn 0.2s ease; }
+    .ma-overlay-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 10px 12px 8px;
+      background: #111111;
+      border-bottom: 1px solid #1a1a1a;
+      border-left: 3px solid #00ff88;
+      flex-shrink: 0;
+    }
+    .ma-close-btn {
+      background: none;
+      border: none;
+      color: #555555;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      padding: 0;
+      margin-top: -2px;
+      font-family: var(--font);
+    }
+    .ma-close-btn:hover { color: #aaaaaa; }
+    .ma-tf-block {
+      padding: 8px 12px 6px;
+      border-bottom: 1px solid #111111;
+    }
+    .ma-tf-label {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .ma-row {
+      display: flex;
+      align-items: center;
+      height: 20px;
+      gap: 4px;
+      margin-bottom: 1px;
+    }
+    .ma-row-label {
+      width: 36px;
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: inherit;
+    }
+    .ma-bar-wrap {
+      flex: 1;
+      height: 3px;
+      background: #1a1a1a;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .ma-bar {
+      height: 100%;
+      border-radius: 2px;
+      opacity: 0.35;
+      transition: width 0.3s ease;
+    }
+    .ma-row-val {
+      width: 72px;
+      text-align: right;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      flex-shrink: 0;
+      color: inherit;
+    }
+    .ma-row-dir {
+      width: 14px;
+      flex-shrink: 0;
+      font-size: 11px;
+      text-align: center;
+      color: inherit;
+    }
+    .ma-stack-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 5px;
+      letter-spacing: 0.04em;
+    }
+    .ma-align-section {
+      padding: 8px 12px;
+      background: #0e0e0e;
+      border-top: 1px solid #1a1a1a;
+      flex-shrink: 0;
+    }
+    tr.active-sym .sym { color: #00ff88 !important; text-decoration: underline; text-underline-offset: 3px; }
   </style>
 </head>
 <body>
@@ -1007,6 +1105,18 @@
         <div id="sp-session"><span style="color:#333;font-size:10px">—</span></div>
       </div>
     </div>
+
+    <!-- MA Stack Overlay (replaces side panel on symbol tap) -->
+    <div id="ma-overlay" style="display:none;width:280px;flex-shrink:0;background:#0a0c10;border-left:1px solid var(--border);position:sticky;top:0;max-height:100vh;overflow-y:auto;flex-direction:column">
+      <div class="ma-overlay-header">
+        <div>
+          <span class="ma-overlay-sym" style="font-family:'Bebas Neue',sans-serif;font-size:22px;color:#00ff88;line-height:1;display:block"></span>
+          <span style="font-size:9px;color:#555555;text-transform:uppercase;letter-spacing:1.5px">MA STACK ANALYSIS</span>
+        </div>
+        <button class="ma-close-btn" onclick="hideMAOverlay()">×</button>
+      </div>
+      <div class="ma-overlay-content" style="flex:1;overflow-y:auto"></div>
+    </div>
   </div>
 </div>
 
@@ -1030,7 +1140,7 @@
 <div id="toast"></div>
 
 <!-- Reference pill -->
-<button id="ref-pill-btn" onclick="toggleRefPill()">?</button>
+<button id="ref-pill-btn" onclick="toggleRefPill()">REFERENCE</button>
 <div id="ref-pill-card">
   <!-- Card header -->
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
