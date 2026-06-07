@@ -1,7 +1,7 @@
+import asyncio
 import os
 import time
 import httpx
-import asyncio
 from typing import Optional
 from config import HL_API_URL, PAPER_MODE
 
@@ -36,6 +36,14 @@ class HLClient:
 
     async def _post(self, payload: dict) -> dict | list:
         resp = await self._http.post(HL_API_URL, json=payload)
+        if resp.status_code == 429:
+            coin = payload.get("req", {}).get("coin", payload.get("type", "?"))
+            print(f"[RATE LIMIT] {coin} 429 received — waiting 2s before retry")
+            await asyncio.sleep(2)
+            resp = await self._http.post(HL_API_URL, json=payload)
+            if resp.status_code == 429:
+                print(f"[RATE LIMIT] {coin} 429 on retry — returning None")
+                return None
         resp.raise_for_status()
         return resp.json()
 
