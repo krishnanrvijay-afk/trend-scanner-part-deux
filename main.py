@@ -41,7 +41,7 @@ from mexc_client import MexcClient
 from scanner import (
     run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
     get_cooldown_remaining, get_pair_signal_info, clear_all_scanner_state,
-    get_btc_regime, get_session_label,
+    get_btc_regime,
 )
 
 # ── Circuit breaker state (module-level) ──────────────────────────────────────
@@ -244,7 +244,7 @@ class AppState:
                 "halted":          trading_halted_today,
             },
             "btc_regime":      get_btc_regime(),
-            "session_label":   get_session_label(),
+            "session_label":   "24/7 SCANNING",
             "last_scan_at":    self.last_scan_at,
             "scan_count":      self.scan_count,
             "deploy_time":     DEPLOY_TIME,
@@ -718,7 +718,8 @@ async def lifespan(app: FastAPI):
     print(
         "[CONFIG] SL=3%_FIXED | SL_HALF=0.6% | TP=1.5R/2.5R/4.0R(HIGH)/2.5R(STRONG)/1.5R(REG) "
         "| COOLDOWN=60min | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=10x/15x/25x "
-        "| SESSION=display_only | MEXC=enabled | HL=enabled | PAPER=" + str(PAPER_MODE)
+        "| WALLS=enabled | CANDLE_CACHE=1h | RATE_LIMIT=stagger_0.3s_backoff_2s "
+        "| EXCHANGE=HL+MEXC | PAPER=" + str(PAPER_MODE)
     )
 
     scan_task  = asyncio.create_task(scan_loop())
