@@ -154,98 +154,11 @@
       50% { opacity: 0.3; }
     }
 
-    /* ── Scanner layout: table + side panel ─────────────────── */
-    .scanner-layout {
+    /* ── Cards layout ────────────────────────────────────────── */
+    .scanner-cards-layout {
       display: flex;
       align-items: flex-start;
     }
-    .table-panel {
-      flex: 1;
-      min-width: 0;
-      overflow-x: auto;
-    }
-
-    /* ── Pair table ──────────────────────────────────────────── */
-    table {
-      width: auto;
-      border-collapse: collapse;
-    }
-
-    thead th {
-      background: var(--surface2);
-      padding: 10px 10px;
-      text-align: right;
-      vertical-align: middle;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-      color: #ffffff;
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-    }
-    thead th:first-child { text-align: left; }
-    thead th.th-trend    { text-align: left; width: 110px; }
-    thead th.th-gates    { text-align: center; }
-    thead th.th-signal   { text-align: center; }
-
-    tbody tr {
-      transition: background 0.12s;
-    }
-    tbody tr.row-hover { background: var(--surface2); }
-
-    /* Two-row pair layout */
-    tbody tr.pair-row-1 { border-bottom: none; }
-    tbody tr.pair-row-2 { border-bottom: 1px solid var(--border); }
-
-    td {
-      padding: 10px 10px;
-      color: var(--text);
-      white-space: nowrap;
-      text-align: right;
-    }
-    td:first-child { text-align: left; }
-
-    .sym { font-weight: 700; letter-spacing: 0.04em; }
-    .price-cell { font-variant-numeric: tabular-nums; }
-
-    .trend-bull  { color: var(--bull); font-weight: 700; }
-    .trend-bear  { color: var(--bear); font-weight: 700; }
-    .trend-neu   { color: var(--neutral); }
-
-    .score-high { color: var(--green); font-weight: 700; }
-    .score-med  { color: var(--yellow); }
-    .score-low  { color: var(--muted); }
-
-    /* ── Depth strip (row 2) ─────────────────────────────────── */
-    .depth-strip {
-      display: flex;
-      align-items: center;
-      background: #0a0a0a;
-      padding: 4px 12px;
-    }
-    .depth-buyers, .depth-sellers {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex: 1;
-      padding: 3px 0;
-    }
-    .ds-divider {
-      width: 1px;
-      height: 20px;
-      background: #222222;
-      flex-shrink: 0;
-      margin: 0 12px;
-    }
-    .ds-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
-    .ds-label-buy  { color: #00ff88; }
-    .ds-label-sell { color: #ff4444; }
-    .ds-pct { font-size: 12px; font-weight: 700; font-family: var(--mono); }
-    .ds-pct-buy  { color: #00ff88; }
-    .ds-pct-sell { color: #ff4444; }
-    .ds-wall-lbl { font-size: 9px; color: #555555; text-transform: uppercase; letter-spacing: 0.06em; }
-    .ds-wall-val { font-size: 12px; font-weight: 700 !important; color: #ffffff !important; font-family: var(--mono); }
 
     /* ── Alert cards ─────────────────────────────────────────── */
     .alerts-empty {
@@ -464,32 +377,6 @@
     @keyframes scan-flash {
       0%   { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
       100% { background: #444444; box-shadow: none; }
-    }
-
-    /* ── Gate dots ───────────────────────────────────────────── */
-    .gate-dots {
-      display: inline-flex;
-      gap: 3px;
-      align-items: center;
-      justify-content: center;
-      cursor: default;
-    }
-    .gate-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .gates-subheader td {
-      padding: 2px 10px 3px;
-      background: var(--surface2);
-      border-bottom: 1px solid var(--border);
-      font-size: 9px;
-      font-weight: 700;
-      color: #ffffff;
-      font-family: 'JetBrains Mono', monospace;
-      letter-spacing: .05em;
-      line-height: 1;
     }
 
     /* ── Error toast ─────────────────────────────────────────── */
@@ -908,18 +795,9 @@
       border-top: 1px solid #1a1a1a;
       flex-shrink: 0;
     }
-    tr.active-sym .sym { color: #00ff88 !important; text-decoration: underline; text-underline-offset: 3px; }
-    /* ── View toggle ─────────────────────────────────────── */
-    .view-toggle { margin-left:auto; display:flex; gap:3px; flex-shrink:0; }
-    .view-btn {
-      background:#0f0f0f; border:1px solid #1e1e1e; border-radius:3px;
-      padding:3px 8px; font-family:'JetBrains Mono',monospace; font-size:9px;
-      font-weight:700; color:#444; cursor:pointer; letter-spacing:0.5px;
-    }
-    .view-btn.active { background:#1e1e1e; border-color:#555; color:#fff; }
     /* ── Filter bar ───────────────────────────────────────── */
     #filter-bar {
-      display:none; flex-direction:row; gap:5px; padding:5px 8px;
+      display:flex; flex-direction:row; gap:5px; padding:5px 8px;
       overflow-x:auto; scrollbar-width:none;
       background:var(--surface); border-bottom:1px solid var(--border);
     }
@@ -938,7 +816,8 @@
     .filter-pill.fp-trades { color:#00ff88; border-color:rgba(0,255,136,0.3); }
     /* ── Card grid ────────────────────────────────────────── */
     #card-grid {
-      display:none; grid-template-columns:1fr 1fr; gap:7px; padding:8px; align-content:start;
+      flex:1; min-width:0;
+      display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:8px; align-content:start;
     }
     .pair-card {
       background:#0a0c10; border:1px solid #1a1a1a; border-radius:8px; overflow:hidden;
@@ -979,6 +858,25 @@
     .card-signal-badge {
       padding:5px 8px; display:flex; align-items:center; gap:5px;
       font-size:10px; font-weight:700; font-family:'JetBrains Mono',monospace; letter-spacing:0.04em;
+    }
+    /* ── Market strip (mobile compact summary, hidden on >900px) ── */
+    #market-strip {
+      display: none; gap: 5px; padding: 5px 8px;
+      overflow-x: auto; scrollbar-width: none;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      flex-wrap: nowrap; align-items: center;
+    }
+    #market-strip::-webkit-scrollbar { display: none; }
+    .ms-chip {
+      display: inline-flex; align-items: center;
+      padding: 3px 8px; border-radius: 10px; border: 1px solid;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700; white-space: nowrap; flex-shrink: 0;
+    }
+    .ms-sep { color: #333; margin: 0 3px; font-size: 11px; }
+    @media (max-width: 900px) {
+      .side-panel { display: none !important; }
+      #market-strip { display: flex; }
     }
   </style>
 </head>
@@ -1100,13 +998,12 @@
   <span style="color:#ffffff">12 pairs</span>
   <span style="color:#444444;margin:0 5px">·</span>
   <span id="pulse-signals" style="color:#00ff88;font-weight:bold">—</span>&nbsp;<span style="color:#ffffff">signals</span>
-  <div class="view-toggle">
-    <button class="view-btn active" id="view-btn-table" onclick="setViewMode('table')">TABLE</button>
-    <button class="view-btn"        id="view-btn-cards" onclick="setViewMode('cards')">CARDS</button>
-  </div>
 </div>
 
-<!-- Filter bar (cards mode only) -->
+<!-- Market strip: compact snapshot row shown on <900px screens -->
+<div id="market-strip"></div>
+
+<!-- Filter bar -->
 <div id="filter-bar">
   <button class="filter-pill active" data-filter="all"    onclick="setFilter('all')">ALL <span id="filter-count">12</span></button>
   <button class="filter-pill fp-bear"  data-filter="bear"   onclick="setFilter('bear')">BEAR</button>
@@ -1136,41 +1033,11 @@
 
 <!-- TAB 1: SCANNER -->
 <div id="tab-scanner" class="tab-content active">
-  <!-- Card grid (cards view mode) -->
-  <div id="card-grid"></div>
-  <div class="scanner-layout">
-    <!-- Pair table -->
-    <div class="table-panel">
-      <table>
-        <thead>
-          <tr>
-            <th style="text-align:left;width:50px">SYM</th>
-            <th class="th-trend">TREND</th>
-            <th style="text-align:right;width:115px">PRICE</th>
-            <th style="text-align:left;width:148px">BUYERS &middot; SELLERS</th>
-            <th style="text-align:right;width:48px">ADX</th>
-            <th style="text-align:right;width:44px">J</th>
-            <th class="th-gates" style="width:80px">GATES</th>
-            <th class="th-signal" style="width:90px">SIGNAL</th>
-          </tr>
-          <tr class="gates-subheader">
-            <td></td>
-            <td></td>
-            <td style="text-align:right">24H %</td>
-            <td style="text-align:center">% &middot; wall</td>
-            <td style="text-align:right">14P</td>
-            <td style="text-align:right">1H</td>
-            <td style="text-align:center">T &middot; A &middot; D &middot; M</td>
-            <td></td>
-          </tr>
-        </thead>
-        <tbody id="pair-tbody">
-          <tr class="pair-row-1"><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
-        </tbody>
-      </table>
-    </div>
+  <div class="scanner-cards-layout">
+    <!-- Card grid (always shown, all screen sizes) -->
+    <div id="card-grid"></div>
 
-    <!-- Right side panel -->
+    <!-- Snapshot side panel (hidden on <900px via @media) -->
     <div class="side-panel" id="side-panel">
       <div class="sp-section">
         <div class="sp-title">Trend Bias</div>
