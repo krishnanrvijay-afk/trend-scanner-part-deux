@@ -9,8 +9,8 @@ const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown 
 
 function setFilter(f) {
   activeFilter = f;
-  document.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
-  const pill = document.querySelector(`.filter-pill[data-filter="${f}"]`);
+  document.querySelectorAll('.tfp').forEach(el => el.classList.remove('active'));
+  const pill = document.querySelector(`.tfp[data-filter="${f}"]`);
   if (pill) pill.classList.add('active');
   renderCardGrid();
 }
@@ -1384,12 +1384,13 @@ function renderCardGrid() {
   const ot  = state.open_trades || {};
 
   switch (activeFilter) {
-    case 'bear':   pairs = pairs.filter(p => p.trend === 'Strong Bear'); break;
-    case 'bull':   pairs = pairs.filter(p => p.trend === 'Strong Bull'); break;
-    case 'alerts': pairs = pairs.filter(p => p.signal_state === 'PENDING' || p.signal_state === 'ALERT'); break;
-    case 'trades': pairs = pairs.filter(p => p.signal_state === 'IN_TRADE'); break;
-    case 'hp':     pairs = pairs.filter(p => p.trend_strength === 'HIGH_PROB'); break;
-    case 'strong': pairs = pairs.filter(p => p.trend_strength === 'STRONG'); break;
+    case 'alerts':    pairs = pairs.filter(p => p.signal_state === 'PENDING' || p.signal_state === 'ALERT'); break;
+    case 'trades':    pairs = pairs.filter(p => p.signal_state === 'IN_TRADE'); break;
+    case 'bear-high': pairs = pairs.filter(p => p.trend_pill === 'HIGH_PROB_BEAR'); break;
+    case 'bull-high': pairs = pairs.filter(p => p.trend_pill === 'HIGH_PROB_BULL'); break;
+    case 'strong':    pairs = pairs.filter(p => p.trend_pill === 'STRONG_BEAR' || p.trend_pill === 'STRONG_BULL'); break;
+    case 'regular':   pairs = pairs.filter(p => p.trend_pill === 'REGULAR_BEAR' || p.trend_pill === 'REGULAR_BULL'); break;
+    case 'neutral':   pairs = pairs.filter(p => p.trend_pill === 'NEUTRAL'); break;
   }
 
   const countEl = document.getElementById('filter-count');
@@ -1397,7 +1398,7 @@ function renderCardGrid() {
 
   grid.innerHTML = pairs.length
     ? pairs.map(p => buildPairCard(p)).join('')
-    : `<div style="grid-column:1/-1;text-align:center;color:#444;padding:40px;font-size:11px">No pairs match this filter</div>`;
+    : `<div style="grid-column:1/-1;text-align:center;color:#555;padding:40px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em">NO PAIRS MATCHING FILTER</div>`;
 }
 
 function renderMarketStrip() {
