@@ -71,11 +71,9 @@ function switchTab(tabId) {
 function updateAlertBadge() {
   if (!state) return;
   const openTrades    = state.open_trades || {};
-  const openTradeKeys = new Set(Object.keys(openTrades)); // e.g. "BTCLONG"
+  const openTradeKeys = new Set(Object.keys(openTrades));
   const alerts        = state.alerts || [];
 
-  // Count open positions once, plus confirmed alerts that don't have a matching
-  // open trade yet (unacted). Never count pending-reconfirmation cards.
   const unactedAlerts = alerts.filter(a => !openTradeKeys.has(`${a.symbol}${a.direction}`));
   const total = openTradeKeys.size + unactedAlerts.length;
 
@@ -89,7 +87,6 @@ function updateAlertBadge() {
     }
   }
 
-  // Flash the tab label when count increases (new alert or new trade)
   if (prevAlertTradeCount !== -1 && total > prevAlertTradeCount) {
     const btn = document.getElementById('tab-btn-alerts');
     if (btn) {
@@ -166,7 +163,6 @@ async function closeTrade(symbol, direction) {
       showToast(data.detail || 'Failed to close trade');
       return;
     }
-    // Immediately retire the card from local state — don't wait for the next poll
     if (state) {
       state.alerts = (state.alerts || []).filter(
         a => !(a.symbol === symbol && a.direction === direction)
@@ -189,7 +185,6 @@ async function fetchState() {
     const res = await fetch('/api/state');
     if (!res.ok) return;
     state = await res.json();
-    // Resync local cooldown end-times from server so the countdown stays accurate
     const nowSec = Date.now() / 1000;
     for (const p of (state.pair_states || [])) {
       const cd = p.cooldown_remaining_seconds;
@@ -212,7 +207,6 @@ function renderHeader() {
   const pct = acc.cap_pct || 0;
   const capColor = pct >= 90 ? '#ff4444' : pct >= 70 ? '#ffaa00' : '#00ff88';
 
-  // ── Left card ────────────────────────────────────────────────
   const marginEl = document.getElementById('hc-margin');
   if (marginEl) {
     marginEl.textContent = `${fmt(acc.margin_deployed, 0)} / ${fmt(acc.cap, 0)} USDC`;
@@ -244,7 +238,7 @@ function renderHeader() {
     deployEl.dataset.set = '1';
   }
 
-  // ── Right card: Market Snapshot summary ──────────────────────
+  // Right card
   const ms = state.market_snapshot || {};
   const tb = ms.trend_bias || {};
   const bearCount = (tb.strong_bear || []).length;
@@ -288,10 +282,9 @@ function renderHeader() {
   const sigEl = document.getElementById('hc-signals');
   if (sigEl) sigEl.textContent = (state.alerts || []).length;
 
-  // ── Slots display ─────────────────────────────────────────────
-  const acct = state.account || {};
-  const slotsUsed  = acct.slots_used  ?? 0;
-  const maxSlots   = acct.max_slots   ?? 2;
+  // Slots
+  const slotsUsed  = acc.slots_used  ?? 0;
+  const maxSlots   = acc.max_slots   ?? 2;
   const slotsEl    = document.getElementById('hc-slots');
   if (slotsEl) {
     const slotsColor = slotsUsed >= maxSlots ? '#ff4444' : slotsUsed > 0 ? '#ffaa00' : '#00ff88';
@@ -299,7 +292,7 @@ function renderHeader() {
     slotsEl.style.color = slotsColor;
   }
 
-  // ── Daily P&L display ─────────────────────────────────────────
+  // Daily P&L
   const daily      = state.daily || {};
   const dailyPnl   = daily.pnl   ?? null;
   const dailyHalted = daily.halted ?? false;
@@ -311,7 +304,7 @@ function renderHeader() {
     pnlEl.style.color = pnlColor;
   }
 
-  // ── Session status display ────────────────────────────────────
+  // Session
   const sessionLabel = state.session_label || 'CLOSED';
   const sessionEl    = document.getElementById('hc-session');
   if (sessionEl) {
@@ -322,7 +315,7 @@ function renderHeader() {
     sessionEl.style.color = sessionColor;
   }
 
-  // ── BTC regime display (right card) ──────────────────────────
+  // BTC regime (right card)
   const btcRegime = state.btc_regime || 'Neutral';
   const btcEl     = document.getElementById('hc-btc-regime');
   if (btcEl) {
@@ -334,21 +327,19 @@ function renderHeader() {
     btcEl.style.color = btcColor;
   }
 
-  // ── Daily limit banner & reset button ────────────────────────
+  // Daily limit banner
   const dlBadgeEl = document.getElementById('daily-limit-badge');
   if (dlBadgeEl) dlBadgeEl.style.display = dailyHalted ? 'inline-flex' : 'none';
-
   const rdBtnEl = document.getElementById('reset-day-btn');
   if (rdBtnEl) rdBtnEl.style.display = dailyHalted ? 'inline-flex' : 'none';
 
-  // ── Circuit breaker display ───────────────────────────────────
+  // Circuit breaker
   const cb = state.circuit_breaker || {};
   const cbActive = cb.active || false;
   const cbLosses = cb.consecutive_losses || 0;
 
   const cbBadgeEl = document.getElementById('circuit-breaker-badge');
   if (cbBadgeEl) cbBadgeEl.style.display = cbActive ? 'inline-flex' : 'none';
-
   const cbResetEl = document.getElementById('circuit-breaker-reset');
   if (cbResetEl) cbResetEl.style.display = cbActive ? 'inline-flex' : 'none';
 
@@ -400,50 +391,90 @@ function renderScanPulse() {
     }
   }
 
-  // Flash pulse dot when scan_count increments
   if (lastScanCount !== -1 && scanCount !== lastScanCount) {
     const dot = document.getElementById('pulse-dot');
     if (dot) {
       dot.classList.remove('flash');
-      void dot.offsetWidth; // force reflow to restart CSS animation
+      void dot.offsetWidth;
       dot.classList.add('flash');
     }
   }
   lastScanCount = scanCount;
 }
 
-// ── Pair table render ─────────────────────────────────────────────────────────
-// Rows are updated in-place by data-symbol to preserve insertion order.
-// Server returns pairs pre-sorted to match config.py PAIRS order.
+// ── Trend dot strength builder ─────────────────────────────────────────────────
 
-function buildPairRowHtml(p, promotedEntry) {
-  const trendClass = p.trend === 'Strong Bull' ? 'trend-bull'
-    : p.trend === 'Strong Bear' ? 'trend-bear' : 'trend-neu';
-  const trendLabel = p.trend === 'Strong Bull' ? '▲ S.Bull'
-    : p.trend === 'Strong Bear' ? '▼ S.Bear' : '— Neutral';
+function buildTrendDots(trend, adx) {
+  const isBull    = trend === 'Strong Bull';
+  const isBear    = trend === 'Strong Bear';
+  const isNeutral = !isBull && !isBear;
 
-  const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
-  const adx = p.adx  ?? 0;
-  const j5  = p.j5   ?? 50;
-  const bid = p.bid_pct ?? 0;
-  const ask = p.ask_pct ?? 0;
+  const litColor   = isBull ? '#00ff88' : isBear ? '#ff4444' : '#222222';
+  const litGlow    = isBull ? 'rgba(0,255,136,0.7)' : isBear ? 'rgba(255,68,68,0.7)' : 'none';
+  const dimBg      = isBull ? 'rgba(0,255,136,0.12)' : isBear ? 'rgba(255,68,68,0.12)' : '#222222';
+  const dimBorder  = isBull ? '1px solid rgba(0,255,136,0.2)' : isBear ? '1px solid rgba(255,68,68,0.2)' : '1px solid #333';
+  const labelColor = isBull ? '#00ff88' : isBear ? '#ff4444' : '#444444';
+  const label      = isBull ? 'BULL' : isBear ? 'BEAR' : 'NEU';
+
+  let litCount = 0;
+  if (!isNeutral) {
+    if (adx >= 60) litCount = 3;
+    else if (adx >= 40) litCount = 2;
+    else if (adx >= 25) litCount = 1;
+  }
+
+  function dot(i) {
+    const lit = i < litCount;
+    if (lit) {
+      return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${litColor};box-shadow:0 0 5px ${litGlow};flex-shrink:0"></span>`;
+    }
+    if (isNeutral) {
+      return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#222;border:1px solid #333;flex-shrink:0"></span>`;
+    }
+    return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${dimBg};border:${dimBorder};flex-shrink:0"></span>`;
+  }
+
+  return `<div style="display:flex;align-items:center;gap:3px">` +
+    dot(0) + dot(1) + dot(2) +
+    `<span style="color:${labelColor};font-weight:700;font-size:10px;margin-left:5px;letter-spacing:0.04em">${label}</span>` +
+    `</div>`;
+}
+
+// ── Pair table render (two-row layout) ────────────────────────────────────────
+
+function buildPairRowHtml(p) {
+  const livePrice  = (state.prices && state.prices[p.symbol]) || p.price;
+  const adx        = p.adx     ?? 0;
+  const j5         = p.j5      ?? 50;
+  const bid        = p.bid_pct ?? 0;
+  const ask        = p.ask_pct ?? 0;
+  const bidWall    = p.bid_wall ?? null;
+  const askWall    = p.ask_wall ?? null;
+  const change24h  = p.change_24h ?? null;
+
+  // Symbol cell
+  const symHtml = `<span class="sym">${p.symbol}</span>`;
+
+  // Trend dots
+  const trendDots = buildTrendDots(p.trend || 'Neutral', adx);
+
+  // 24h change
+  let changeHtml = `<span style="color:#444">—</span>`;
+  if (change24h !== null && !isNaN(change24h)) {
+    const chColor = change24h >= 0 ? '#00ff88' : '#ff4444';
+    const chSign  = change24h >= 0 ? '+' : '';
+    changeHtml = `<span style="color:${chColor};font-weight:700">${chSign}${fmt(Math.abs(change24h), 1)}%</span>`;
+  }
 
   const adxColor = adx >= 30 ? '#00ff88' : '#666666';
   const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
-  const bidColor = bid >= 60 ? '#00ff88' : '#ffffff';
-  const askColor = ask >= 60 ? '#ff4444' : '#ffffff';
-
-  const symHtml = promotedEntry
-    ? `<span class="slot-badge">S${promotedEntry.slot_number}</span><span class="sym">${p.symbol}</span>`
-    : `<span class="sym">${p.symbol}</span>`;
 
   const cdSecs = cooldownEndsAt[p.symbol]
     ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
     : (p.cooldown_remaining_seconds || 0);
 
-  // Signal column — 5 states: SCANNING (dash) / PENDING / ALERT / IN_TRADE / COOLDOWN
+  // Signal cell
   const sigState = p.signal_state || 'SCANNING';
-
   let sigCell;
   switch (sigState) {
     case 'IN_TRADE': {
@@ -455,7 +486,7 @@ function buildPairRowHtml(p, promotedEntry) {
     case 'COOLDOWN': {
       const cdM = Math.floor(cdSecs / 60);
       const cdS = cdSecs % 60;
-      sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap" title="Cooldown active">🕐 ${cdM}m${cdS < 10 ? '0' : ''}${cdS}s</span>`;
+      sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap">🕐 ${cdM}m${cdS < 10 ? '0' : ''}${cdS}s</span>`;
       break;
     }
     case 'ALERT':
@@ -464,20 +495,17 @@ function buildPairRowHtml(p, promotedEntry) {
     case 'PENDING':
       sigCell = `<span style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.04em">⏳ PENDING</span>`;
       break;
-    default: // SCANNING
+    default:
       sigCell = `<span style="color:#444444;font-size:11px">—</span>`;
   }
 
+  // Gate dots
   const gs = p.gates_status || {};
-
-  // 4-dot gate display: T · A · D · MA
-  // Amber on the single failing dot when exactly 3 of 4 pass
   const passCount = [gs.trend_pass, gs.adx_pass, gs.depth_pass, gs.ma_pass].filter(Boolean).length;
   const nearMiss  = passCount === 3;
   function gColor(pass) {
     return pass ? '#00ff88' : (nearMiss ? '#ffaa00' : '#444444');
   }
-
   const chk = v => v ? '✓' : '✗';
   const tip = [
     `TREND ${chk(gs.trend_pass)}`,
@@ -485,7 +513,6 @@ function buildPairRowHtml(p, promotedEntry) {
     `DEPTH ${chk(gs.depth_pass)}`,
     `MA STACK ${chk(gs.ma_pass)}`,
   ].join(' · ');
-
   const gatesCell = `<div class="gate-dots" title="${tip}">` +
     `<span class="gate-dot" style="background:${gColor(gs.trend_pass)}"></span>` +
     `<span class="gate-dot" style="background:${gColor(gs.adx_pass)}"></span>` +
@@ -493,17 +520,44 @@ function buildPairRowHtml(p, promotedEntry) {
     `<span class="gate-dot" style="background:${gColor(gs.ma_pass)}"></span>` +
     `</div>`;
 
-  return `<tr data-symbol="${p.symbol}">
-    <td>${symHtml}</td>
-    <td class="${trendClass}">${trendLabel}</td>
-    <td class="price-cell">${fmtPrice(livePrice)}</td>
-    <td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>
-    <td style="color:${j5Color};text-align:right">${j5 > 100 ? '100+' : j5 < 0 ? '0-' : fmt(j5, 1)}</td>
-    <td style="color:${bidColor};text-align:right">${fmt(bid, 1)}%</td>
-    <td style="color:${askColor};text-align:right">${fmt(ask, 1)}%</td>
-    <td style="text-align:center">${gatesCell}</td>
-    <td style="text-align:center">${sigCell}</td>
-  </tr>`;
+  // Wall display
+  const bidWallStr = bidWall !== null ? fmtPrice(bidWall) : '—';
+  const askWallStr = askWall !== null ? fmtPrice(askWall) : '—';
+
+  // ROW 1 — active data
+  const row1 = `<tr data-symbol="${p.symbol}" class="pair-row-1">` +
+    `<td style="text-align:left">${symHtml}</td>` +
+    `<td style="text-align:left">${trendDots}</td>` +
+    `<td class="price-cell">${fmtPrice(livePrice)}</td>` +
+    `<td>${changeHtml}</td>` +
+    `<td style="color:${adxColor}">${fmt(adx, 1)}</td>` +
+    `<td style="color:${j5Color}">${j5 > 100 ? '100+' : j5 < 0 ? '0-' : fmt(j5, 1)}</td>` +
+    `<td style="text-align:center">${gatesCell}</td>` +
+    `<td style="text-align:center">${sigCell}</td>` +
+    `</tr>`;
+
+  // ROW 2 — depth strip
+  const row2 = `<tr data-symbol="${p.symbol}" class="pair-row-2">` +
+    `<td colspan="8" style="padding:0">` +
+    `<div class="depth-strip">` +
+    `<div class="depth-buyers">` +
+    `<span class="ds-label ds-label-buy">BUYERS</span>` +
+    `<span class="ds-pct ds-pct-buy">${fmt(bid, 1)}%</span>` +
+    `<span class="ds-wall-lbl">WALL</span>` +
+    `<span class="ds-wall-val">${bidWallStr}</span>` +
+    `</div>` +
+    `<div class="ds-divider"></div>` +
+    `<div class="depth-sellers">` +
+    `<span class="ds-label ds-label-sell">SELLERS</span>` +
+    `<span class="ds-pct ds-pct-sell">${fmt(ask, 1)}%</span>` +
+    `<span class="ds-wall-lbl">WALL</span>` +
+    `<span class="ds-wall-val">${askWallStr}</span>` +
+    `</div>` +
+    `</div>` +
+    `</td>` +
+    `</tr>`;
+
+  return row1 + row2;
 }
 
 function renderPairTable() {
@@ -512,70 +566,117 @@ function renderPairTable() {
   const pairs = state.pair_states || [];
 
   if (pairs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
+    tbody.innerHTML = '<tr class="pair-row-1"><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
     return;
   }
 
   let html = '';
-  for (const p of pairs) html += buildPairRowHtml(p, null);
+  for (const p of pairs) html += buildPairRowHtml(p);
   tbody.innerHTML = html;
+
+  // Sync hover highlight across both rows of each pair
+  tbody.querySelectorAll('tr[data-symbol]').forEach(row => {
+    const sym = row.dataset.symbol;
+    row.addEventListener('mouseenter', () => {
+      tbody.querySelectorAll(`tr[data-symbol="${sym}"]`).forEach(r => r.classList.add('row-hover'));
+    });
+    row.addEventListener('mouseleave', () => {
+      tbody.querySelectorAll(`tr[data-symbol="${sym}"]`).forEach(r => r.classList.remove('row-hover'));
+    });
+  });
 }
 
-// ── Market snapshot render ────────────────────────────────────────────────────
+// ── Right side panel render ───────────────────────────────────────────────────
 
-function toggleSnapshot() {
-  const body    = document.getElementById('snapshot-body');
-  const chevron = document.getElementById('snapshot-chevron');
-  if (!body) return;
-  const isOpen = body.style.display !== 'none';
-  body.style.display = isOpen ? 'none' : 'block';
-  if (chevron) chevron.textContent = isOpen ? '▶' : '▼';
-}
-
-function renderMarketSnapshot() {
-  const content = document.getElementById('snapshot-content');
-  if (!content || !state) return;
-  const ms = state.market_snapshot;
-  if (!ms) return;
-
+function renderSidePanel() {
+  if (!state) return;
+  const ms = state.market_snapshot || {};
   const tb = ms.trend_bias     || {};
   const ab = ms.adx_bands      || {};
   const mb = ms.momentum_bands || {};
-  const db = ms.depth_bias     || {};
 
   function chips(arr, color) {
-    if (!arr || arr.length === 0)
-      return `<span style="color:#444444;font-size:10px">—</span>`;
-    return arr.map(s =>
-      `<span style="color:${color};font-weight:bold;font-size:10px">${s}</span>`
-    ).join(' ');
+    if (!arr || arr.length === 0) return '';
+    return arr.map(s => `<span class="sp-chip" style="color:${color}">${s}</span>`).join(' ');
   }
 
-  content.innerHTML = `
-    <div class="snapshot-section">
-      <div class="snap-label">Trend Bias</div>
-      <div class="snap-row"><span class="snap-key">Bull</span>${chips(tb.strong_bull, '#00ff88')}</div>
-      <div class="snap-row"><span class="snap-key">Bear</span>${chips(tb.strong_bear, '#ff4444')}</div>
-      <div class="snap-row"><span class="snap-key">Neutral</span>${chips(tb.neutral, '#ffaa00')}</div>
-    </div>
-    <div class="snapshot-section">
-      <div class="snap-label">ADX Strength</div>
-      <div class="snap-row"><span class="snap-key">≥60</span>${chips(ab.strong, '#00ff88')}</div>
-      <div class="snap-row"><span class="snap-key">30–59</span>${chips(ab.moderate, '#ffaa00')}</div>
-      <div class="snap-row"><span class="snap-key">&lt;30</span>${chips(ab.weak, '#666666')}</div>
-    </div>
-    <div class="snapshot-section">
-      <div class="snap-label">Momentum J</div>
-      <div class="snap-row"><span class="snap-key">OB ≥80</span>${chips(mb.overbought, '#ff4444')}</div>
-      <div class="snap-row"><span class="snap-key">Neutral</span>${chips(mb.neutral_j, '#ffffff')}</div>
-      <div class="snap-row"><span class="snap-key">OS ≤20</span>${chips(mb.oversold, '#00ff88')}</div>
-    </div>
-    <div class="snapshot-section">
-      <div class="snap-label">Depth Bias</div>
-      <div class="snap-row"><span class="snap-key">Ask ≥55%</span>${chips(db.ask_dominant, '#ff4444')}</div>
-      <div class="snap-row"><span class="snap-key">Bid ≥55%</span>${chips(db.bid_dominant, '#00ff88')}</div>
-      <div class="snap-row"><span class="snap-key">Balanced</span>${chips(db.balanced, '#ffffff')}</div>
-    </div>`;
+  // TREND BIAS
+  const trendEl = document.getElementById('sp-trend-bias');
+  if (trendEl) {
+    let html = '';
+    const bears = tb.strong_bear || [];
+    const bulls = tb.strong_bull || [];
+    const neuts = tb.neutral     || [];
+    if (bears.length > 0) {
+      html += `<div class="sp-row"><span class="sp-row-label" style="color:#ff4444">BEAR ${bears.length}</span></div>`;
+      html += `<div class="sp-chips">${chips(bears, '#ff4444')}</div>`;
+    }
+    if (bulls.length > 0) {
+      html += `<div class="sp-row"><span class="sp-row-label" style="color:#00ff88">BULL ${bulls.length}</span></div>`;
+      html += `<div class="sp-chips">${chips(bulls, '#00ff88')}</div>`;
+    }
+    if (neuts.length > 0) {
+      html += `<div class="sp-chips">${chips(neuts, '#444444')}</div>`;
+    }
+    trendEl.innerHTML = html || '<span style="color:#333;font-size:9px">—</span>';
+  }
+
+  // ADX STRENGTH — ●●● ≥60, ●● 30-59, ○ <30
+  const adxEl = document.getElementById('sp-adx-strength');
+  if (adxEl) {
+    let html = '';
+    if ((ab.strong   || []).length > 0) {
+      html += `<div class="sp-adx-row"><span class="sp-adx-dots" style="color:#00ff88">●●●</span><div class="sp-chips">${chips(ab.strong, '#00ff88')}</div></div>`;
+    }
+    if ((ab.moderate || []).length > 0) {
+      html += `<div class="sp-adx-row"><span class="sp-adx-dots" style="color:#ffaa00">●●</span><div class="sp-chips">${chips(ab.moderate, '#ffaa00')}</div></div>`;
+    }
+    if ((ab.weak     || []).length > 0) {
+      html += `<div class="sp-adx-row"><span class="sp-adx-dots" style="color:#444">○</span><div class="sp-chips">${chips(ab.weak, '#444444')}</div></div>`;
+    }
+    adxEl.innerHTML = html || '<span style="color:#333;font-size:9px">—</span>';
+  }
+
+  // MOMENTUM J
+  const momEl = document.getElementById('sp-momentum');
+  if (momEl) {
+    let html = '';
+    if ((mb.overbought || []).length > 0) {
+      html += `<div style="font-size:9px;color:#ff4444;font-weight:700;margin-bottom:2px">OB J&gt;80</div>`;
+      html += `<div class="sp-chips" style="margin-bottom:4px">${chips(mb.overbought, '#ff4444')}</div>`;
+    }
+    if ((mb.oversold  || []).length > 0) {
+      html += `<div style="font-size:9px;color:#00ff88;font-weight:700;margin-bottom:2px">OS J&lt;20</div>`;
+      html += `<div class="sp-chips">${chips(mb.oversold, '#00ff88')}</div>`;
+    }
+    momEl.innerHTML = html || '<span style="color:#333;font-size:9px">—</span>';
+  }
+
+  // BTC REGIME
+  const btcEl = document.getElementById('sp-btc-regime');
+  if (btcEl) {
+    const regime = state.btc_regime || 'Neutral';
+    const regimeBg     = regime === 'Strong Bull' ? 'rgba(0,255,136,0.1)'  : regime === 'Strong Bear' ? 'rgba(255,68,68,0.1)'  : 'rgba(255,170,0,0.1)';
+    const regimeBorder = regime === 'Strong Bull' ? 'rgba(0,255,136,0.3)'  : regime === 'Strong Bear' ? 'rgba(255,68,68,0.3)'  : 'rgba(255,170,0,0.3)';
+    const regimeColor  = regime === 'Strong Bull' ? '#00ff88'               : regime === 'Strong Bear' ? '#ff4444'               : '#ffaa00';
+    const regimeLabel  = regime === 'Strong Bull' ? 'BULL'                  : regime === 'Strong Bear' ? 'BEAR'                  : 'NEUTRAL';
+    btcEl.innerHTML = `<div class="sp-regime-badge" style="background:${regimeBg};border:1px solid ${regimeBorder}">` +
+      `<div class="sp-regime-text" style="color:${regimeColor}">${regimeLabel}</div>` +
+      `<div class="sp-regime-sub">${regime}</div>` +
+      `</div>`;
+  }
+
+  // SESSION
+  const sessEl = document.getElementById('sp-session');
+  if (sessEl) {
+    const session   = state.session_label || 'CLOSED';
+    const sessColor = session === 'CLOSED' ? '#ff4444' : '#00ff88';
+    const sessBg    = session === 'CLOSED' ? 'rgba(255,68,68,0.1)' : 'rgba(0,255,136,0.1)';
+    const sessBdr   = session === 'CLOSED' ? 'rgba(255,68,68,0.3)' : 'rgba(0,255,136,0.3)';
+    sessEl.innerHTML = `<div class="sp-session-badge" style="background:${sessBg};border:1px solid ${sessBdr}">` +
+      `<div class="sp-session-text" style="color:${sessColor}">${session}</div>` +
+      `</div>`;
+  }
 }
 
 // ── Alert card builder ────────────────────────────────────────────────────────
@@ -594,7 +695,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
   const trendLabel = isLong ? '▲ S.Bull' : '▼ S.Bear';
 
   const dr       = alert.dollar_risk || 0;
-  const slDollar = dr > 0 ? `-$${fmt(dr, 2)}`       : '—';
+  const slDollar  = dr > 0 ? `-$${fmt(dr, 2)}`       : '—';
   const tp1Dollar = dr > 0 ? `+$${fmt(dr * 1.5, 2)}` : '—';
   const tp2Dollar = dr > 0 ? `+$${fmt(dr * 2.0, 2)}` : '—';
 
@@ -606,7 +707,6 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
         : `<span style="color:#555;text-decoration:line-through;margin-right:6px">${fmtPrice(alert.sl_price)}</span><span style="color:#00ff88;font-weight:700">BREAKEVEN</span>`)
     : `<span style="color:#ff4444;font-weight:700">${fmtPrice(alert.sl_price)}</span>`;
 
-  // Progress bar: 0% = SL (worst), 100% = TP2 (best)
   const currentPrice = (state.prices && state.prices[alert.symbol])
     || (trade && trade.current_price)
     || alert.entry_price;
@@ -619,7 +719,6 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
       : (slP - currentPrice) / (slP - tp2P) * 100;
     progressPct = Math.max(0, Math.min(100, progressPct));
   }
-  // Interpolate color red→green
   const t  = progressPct / 100;
   const pr = Math.round(0xff + (0x00 - 0xff) * t);
   const pg = Math.round(0x44 + (0xff - 0x44) * t);
@@ -628,7 +727,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
 
   let html = `<div class="ac">`;
 
-  // ── Header
+  // Header
   html += `
     <div>
       <div class="ac-header-top">
@@ -646,7 +745,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
 
   if (entryBanner) html += entryBanner;
 
-  // ── IN TRADE status
+  // IN TRADE status
   if (inTrade) {
     const badgeBorder = isLong ? '#00ff88' : '#ff4444';
     const badgeBg     = isLong ? 'rgba(0,255,136,0.07)' : 'rgba(255,68,68,0.07)';
@@ -683,7 +782,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
       </div>`;
   }
 
-  // ── Position details
+  // Position details
   html += `
     <div>
       <div class="ac-section-label">Position</div>
@@ -700,7 +799,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
       </div>
     </div>`;
 
-  // ── Levels
+  // Levels
   const tp1Check = tp1Hit ? ` <span style="color:#00ff88">✓</span>` : '';
   html += `
     <div>
@@ -727,7 +826,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
       </div>
     </div>`;
 
-  // ── Progress bar
+  // Progress bar
   html += `
     <div>
       <div class="ac-progress-wrap">
@@ -740,7 +839,7 @@ function buildConfirmedAlertCard(alert, trade, capReached, entryBanner = '') {
       </div>
     </div>`;
 
-  // ── Footer
+  // Footer
   html += `<div class="ac-footer"><span class="ac-elapsed">Fired ${relTime(alert.fired_at)}</span>`;
   if (!inTrade) {
     const autoInfo = (state.auto_pending || {})[key];
@@ -824,10 +923,9 @@ function buildAwaitingEntryCard(ae) {
 function renderAlerts() {
   if (!state) return;
   const container = document.getElementById('alerts-container');
-  const allAlerts  = (state.alerts || []).slice().reverse(); // newest first
+  const allAlerts  = (state.alerts || []).slice().reverse();
   const pendings   = (state.pending_alerts || []).slice().reverse();
 
-  // Filter out pendings that already have a confirmed alert
   const confirmedKeys   = new Set(allAlerts.map(a => `${a.symbol}${a.direction}`));
   const visiblePendings = pendings.filter(p => !confirmedKeys.has(`${p.symbol}${p.direction}`));
 
@@ -845,7 +943,7 @@ function renderAlerts() {
 
   let html = '<div class="alerts-list">';
 
-  // ── Pending cards (amber, no OPEN pill) ──────────────────────────────────
+  // Pending cards
   for (const p of visiblePendings) {
     const isLong = p.direction === 'LONG';
     html += `
@@ -886,7 +984,7 @@ function renderAlerts() {
       </div>`;
   }
 
-  // ── Confirmed alert cards ─────────────────────────────────────────────────
+  // Confirmed alert cards
   for (const alert of allAlerts) {
     const key   = `${alert.symbol}${alert.direction}`;
     const trade = openTrades[key];
@@ -903,7 +1001,7 @@ function renderAll() {
   renderHeader();
   renderScanPulse();
   renderPairTable();
-  renderMarketSnapshot();
+  renderSidePanel();
   renderAlerts();
   renderTradeLog();
   updateAlertBadge();
@@ -925,7 +1023,7 @@ function renderTradeLog() {
 
   let html = '';
 
-  // ── IN PROGRESS section ────────────────────────────────────────────────────
+  // IN PROGRESS section
   if (openTrades.length > 0) {
     html += `<div style="padding:12px 16px 4px">
       <div style="font-size:10px;font-weight:800;letter-spacing:.12em;color:#ffaa00;margin-bottom:8px;text-transform:uppercase">
@@ -966,7 +1064,7 @@ function renderTradeLog() {
     html += '</tbody></table></div></div>';
   }
 
-  // ── Closed trades log ──────────────────────────────────────────────────────
+  // Closed trades log
   if (log.length > 0) {
     if (openTrades.length > 0) {
       html += `<div style="padding:4px 16px 0">
