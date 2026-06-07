@@ -31,9 +31,6 @@ LEVERAGE_TIER1 = 10
 LEVERAGE_TIER2 = 15
 LEVERAGE_TIER3 = 25
 
-SESSION_FILTER_ENABLED = False  # Display only — never blocks scanning or entries.
-SESSION_WINDOWS = [("07:00", "16:00"), ("13:00", "22:00")]
-
 BTC_REGIME_FILTER_ENABLED = True
 
 UNIVERSE_SCAN_ENABLED = False
