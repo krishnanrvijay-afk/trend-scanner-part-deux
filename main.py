@@ -35,13 +35,15 @@ from config import (
     DEFAULT_LEVERAGE, PAPER_MODE,
     CONSECUTIVE_LOSS_STOP, TRAILING_TP_PCT, SL_PCT,
     DAILY_LOSS_LIMIT, STALE_ALERT_SECONDS,
+    ORDER_TYPE_HIGH_PROB, ORDER_TYPE_STRONG, ORDER_TYPE_REGULAR,
+    LIMIT_ORDER_BUFFER_PCT, STRONG_CANCEL_CYCLES, REGULAR_CANCEL_CYCLES,
 )
 from hl_client import HLClient
 from mexc_client import MexcClient
 from scanner import (
     run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
     get_cooldown_remaining, get_pair_signal_info, clear_all_scanner_state,
-    get_btc_regime,
+    get_btc_regime, check_limit_order_cancellation,
 )
 
 # ── Circuit breaker state (module-level) ──────────────────────────────────────
@@ -68,6 +70,7 @@ class AppState:
         self.scan_count: int = 0
         self.trade_log: list[dict] = []
         self.auto_pending: dict[str, dict] = {}
+        self.pending_limit_orders: dict[str, dict] = {}
 
     @property
     def cap_reached(self) -> bool:
@@ -248,8 +251,9 @@ class AppState:
             "last_scan_at":    self.last_scan_at,
             "scan_count":      self.scan_count,
             "deploy_time":     DEPLOY_TIME,
-            "auto_pending":    self.auto_pending,
-            "trade_log":       self.trade_log,
+            "auto_pending":          self.auto_pending,
+            "pending_limit_orders":  self.pending_limit_orders,
+            "trade_log":             self.trade_log,
             "closest_pair":    closest_pair,
             "market_snapshot": market_snapshot,
         }
@@ -346,6 +350,7 @@ async def _do_open_trade(
     margin_usdc: float, leverage: int,
     alert_data: Optional[dict] = None,
     exchange: str = "HL",
+    forced_entry_price: Optional[float] = None,
 ) -> tuple[Optional[dict], Optional[str]]:
     if app_state.margin_deployed + margin_usdc > MARGIN_HARD_CAP_USDC:
         return None, "cap_reached"
@@ -354,7 +359,10 @@ async def _do_open_trade(
         return None, "already_open"
 
     _client = mexc_client if exchange == "MEXC" else hl_client
-    result  = await _client.open_position(symbol, direction, margin_usdc, leverage)
+    result  = await _client.open_position(
+        symbol, direction, margin_usdc, leverage,
+        entry_price=forced_entry_price,
+    )
     if result.get("status") != "ok":
         return None, result.get("msg", "open_failed")
 
@@ -451,6 +459,104 @@ async def _auto_open_trade(trade_key: str, alert: dict):
         print(f"[auto-entry] {alert['symbol']} {alert['direction']} opened at {trade['entry_price']} leverage={lev}x")
     else:
         print(f"[auto-entry] {alert['symbol']} {alert['direction']} skipped: {err}")
+
+
+# ── Limit order placement (STRONG / REGULAR tiers) ───────────────────────────
+
+async def _place_limit_order_async(trade_key: str, alert: dict, exchange: str = "HL"):
+    """Place a resting LIMIT order and track it in pending_limit_orders."""
+    sym = alert["symbol"]
+    dir = alert["direction"]
+
+    current_price = app_state.prices.get(sym) or alert.get("entry_price", 0.0)
+    if not current_price:
+        print(f"[LIMIT ORDER] {sym} {dir} — no price available, skipping")
+        return
+
+    is_long  = dir == "LONG"
+    limit_px = round(
+        current_price * (1 - LIMIT_ORDER_BUFFER_PCT) if is_long
+        else current_price * (1 + LIMIT_ORDER_BUFFER_PCT),
+        6,
+    )
+    sl_price = alert.get("sl_price")
+    lev      = alert.get("leverage", DEFAULT_LEVERAGE)
+    tier     = alert.get("trend_strength", "REGULAR")
+    cancel_after = STRONG_CANCEL_CYCLES if tier == "STRONG" else REGULAR_CANCEL_CYCLES
+
+    _client = mexc_client if exchange == "MEXC" else hl_client
+    result  = await _client.open_position(
+        sym, dir, MARGIN_PER_TRADE, lev,
+        order_type="LIMIT",
+        limit_px=limit_px,
+        sl_price=sl_price,
+    )
+
+    if result.get("status") not in ("ok", "pending"):
+        print(f"[LIMIT ORDER] {sym} {dir} placement failed: {result.get('msg')}")
+        return
+
+    order_id = result.get("order_id", f"paper-{int(time.time())}")
+    is_paper = result.get("paper", True)
+
+    app_state.pending_limit_orders[trade_key] = {
+        "symbol":       sym,
+        "direction":    dir,
+        "limit_px":     limit_px,
+        "order_id":     order_id,
+        "exchange":     exchange,
+        "leverage":     lev,
+        "tier":         tier,
+        "paper":        is_paper,
+        "placed_at":    int(time.time()),
+        "placed_scan":  app_state.scan_count,
+        "cancel_after": cancel_after,
+    }
+
+    plo_payload = {
+        "limit_px":          limit_px,
+        "exchange":          exchange,
+        "order_id":          order_id,
+        "placed_at":         int(time.time()),
+        "tier":              tier,
+        "cancel_after_cycles": cancel_after,
+    }
+    for a in app_state.alerts:
+        if a["symbol"] == sym and a["direction"] == dir:
+            a["pending_limit_order"]   = plo_payload
+            a["scan_cycles_since_alert"] = 0
+            a.pop("limit_order_cancelled", None)
+            a.pop("limit_order_cancelled_at", None)
+
+    print(
+        f"[LIMIT ORDER] {sym} {dir} placed at {limit_px:.6f} "
+        f"(exchange={exchange} tier={tier} order_id={order_id} "
+        f"cancel_after={cancel_after} cycles)"
+    )
+
+
+async def cancel_pending_order(trade_key: str, pending: dict, reason: str = ""):
+    """Cancel a pending limit order and mark the alert as cancelled."""
+    sym      = pending["symbol"]
+    dir      = pending["direction"]
+    order_id = pending.get("order_id", "")
+    exchange = pending.get("exchange", "HL")
+
+    if order_id and not pending.get("paper", True):
+        _client = mexc_client if exchange == "MEXC" else hl_client
+        await _client.cancel_order(sym, order_id)
+
+    app_state.pending_limit_orders.pop(trade_key, None)
+
+    for a in app_state.alerts:
+        if a["symbol"] == sym and a["direction"] == dir:
+            a.pop("pending_limit_order", None)
+            a["limit_order_cancelled"]    = True
+            a["limit_order_cancelled_at"] = int(time.time())
+            if reason:
+                a["limit_order_cancel_reason"] = reason
+
+    print(f"[CANCEL] {sym} {dir} limit order removed (order_id={order_id}) {reason}")
 
 
 # ── Auto-exit: TP1 partial / TP2 / SL / Trailing Stop ───────────────────────
@@ -632,10 +738,12 @@ async def scan_loop():
                             app_state.alerts.append(alert)
                             existing_keys.add(k)
 
-                    # Auto-entry (only for fired/triggered alerts)
+                    # Auto-entry (only for fired/triggered alerts) — tiered order routing
                     if PAPER_MODE and status in ("entry_triggered", ""):
                         trade_key = app_state.get_trade_key(alert["symbol"], alert["direction"])
-                        if trade_key not in app_state.open_trades and not app_state.cap_reached:
+                        if (trade_key not in app_state.open_trades
+                                and trade_key not in app_state.pending_limit_orders
+                                and not app_state.cap_reached):
                             if circuit_breaker_active:
                                 print(f"[CIRCUIT BREAKER] {alert['symbol']} {alert['direction']} auto-entry blocked")
                             elif trading_halted_today:
@@ -648,13 +756,88 @@ async def scan_loop():
                             elif not alert.get("entry_price") or alert.get("entry_price") == 0.0:
                                 print(f"[TRADE BLOCKED] {alert['symbol']} {alert['direction']} null price rejected")
                             else:
-                                app_state.auto_pending[trade_key] = {
-                                    "symbol":    alert["symbol"],
-                                    "direction": alert["direction"],
-                                    "fire_at":   time.time() + 3,
-                                }
-                                asyncio.create_task(_auto_open_trade(trade_key, alert))
-                                print(f"[auto-entry] {alert['symbol']} {alert['direction']} scheduled in 3s")
+                                trend_pill = alert.get("trend_pill", "NEUTRAL")
+                                if trend_pill.startswith("HIGH_PROB"):
+                                    # MARKET — immediate fill with 3s countdown
+                                    app_state.auto_pending[trade_key] = {
+                                        "symbol":    alert["symbol"],
+                                        "direction": alert["direction"],
+                                        "fire_at":   time.time() + 3,
+                                    }
+                                    asyncio.create_task(_auto_open_trade(trade_key, alert))
+                                    print(f"[auto-entry MARKET] {alert['symbol']} {alert['direction']} scheduled in 3s")
+                                else:
+                                    # LIMIT — place resting order, track pending
+                                    asyncio.create_task(
+                                        _place_limit_order_async(trade_key, alert, exchange="HL")
+                                    )
+                                    print(
+                                        f"[auto-entry LIMIT] {alert['symbol']} {alert['direction']} "
+                                        f"queued (tier={alert.get('trend_strength', 'REGULAR')})"
+                                    )
+
+            # ── Check pending LIMIT orders ─────────────────────────────────────
+            for trade_key, pending in list(app_state.pending_limit_orders.items()):
+                p_sym = pending["symbol"]
+                p_dir = pending["direction"]
+                p_lim = pending["limit_px"]
+                p_lev = pending.get("leverage", DEFAULT_LEVERAGE)
+                p_exc = pending.get("exchange", "HL")
+
+                # Find matching alert and pair_state
+                p_alert = next(
+                    (a for a in app_state.alerts
+                     if a["symbol"] == p_sym and a["direction"] == p_dir),
+                    None,
+                )
+                p_pair = next(
+                    (ps for ps in pair_states if ps.get("symbol") == p_sym),
+                    None,
+                ) if pair_states else None
+
+                # Increment cycle counter on alert
+                if p_alert:
+                    p_alert["scan_cycles_since_alert"] = p_alert.get("scan_cycles_since_alert", 0) + 1
+
+                # Cancellation check
+                should_cancel, cancel_reason = False, ""
+                if p_alert and p_pair:
+                    should_cancel, cancel_reason = check_limit_order_cancellation(p_alert, p_pair)
+
+                if should_cancel:
+                    print(cancel_reason)
+                    await cancel_pending_order(trade_key, pending, reason=cancel_reason)
+                    continue
+
+                # Paper mode fill detection — check if current price crossed limit_px
+                if PAPER_MODE:
+                    current_px = app_state.prices.get(p_sym, 0.0)
+                    if current_px:
+                        filled = (
+                            (p_dir == "LONG"  and current_px <= p_lim) or
+                            (p_dir == "SHORT" and current_px >= p_lim)
+                        )
+                        if filled:
+                            # Remove from pending before calling _do_open_trade
+                            app_state.pending_limit_orders.pop(trade_key, None)
+                            if p_alert:
+                                p_alert.pop("pending_limit_order", None)
+
+                            if app_state.slots_full:
+                                print(f"[LIMIT FILL BLOCKED] {p_sym} {p_dir} slots full — order dropped")
+                            else:
+                                trade, err = await _do_open_trade(
+                                    p_sym, p_dir, MARGIN_PER_TRADE, p_lev,
+                                    p_alert, exchange=p_exc,
+                                    forced_entry_price=p_lim,
+                                )
+                                if trade:
+                                    print(
+                                        f"[LIMIT FILL] {p_sym} {p_dir} filled at {p_lim:.6f} "
+                                        f"(exchange={p_exc})"
+                                    )
+                                else:
+                                    print(f"[LIMIT FILL] {p_sym} {p_dir} fill skipped: {err}")
 
             app_state.alerts = app_state.alerts[-50:]
             app_state.last_scan_at = int(time.time())
@@ -805,6 +988,30 @@ async def open_trade(req: OpenTradeRequest):
          if a["symbol"] == req.symbol and a["direction"] == req.direction),
         None,
     )
+
+    # ── Determine order type from alert tier ──────────────────────────────────
+    trend_pill = (alert.get("trend_pill", "NEUTRAL") if alert else "NEUTRAL")
+    if trend_pill.startswith("HIGH_PROB"):
+        order_type = ORDER_TYPE_HIGH_PROB   # "MARKET"
+    elif trend_pill.startswith("STRONG"):
+        order_type = ORDER_TYPE_STRONG      # "LIMIT"
+    else:
+        order_type = ORDER_TYPE_REGULAR     # "LIMIT"
+
+    if order_type == "LIMIT" and trade_key not in app_state.pending_limit_orders:
+        # Place resting LIMIT order
+        await _place_limit_order_async(trade_key, alert or {"symbol": req.symbol, "direction": req.direction}, req.exchange)
+        pending = app_state.pending_limit_orders.get(trade_key)
+        if pending:
+            return {
+                "status":    "pending",
+                "order_type": "LIMIT",
+                "limit_px":   pending["limit_px"],
+                "exchange":   req.exchange,
+                "tier":       pending.get("tier", "REGULAR"),
+            }
+        raise HTTPException(status_code=500, detail="Failed to place limit order")
+
     trade, err = await _do_open_trade(
         req.symbol, req.direction, req.margin_usdc, req.leverage, alert, req.exchange
     )
@@ -947,12 +1154,28 @@ async def clear_tradelog():
     app_state.margin_deployed = 0.0
     app_state.alerts.clear()
     app_state.auto_pending.clear()
+    app_state.pending_limit_orders.clear()
 
     # Reset all scanner counters and cooldowns
     clear_all_scanner_state()
 
     print(f"[CLEAR] log cleared, state reset, {open_count} trades force closed")
     return {"status": "ok", "trades_force_closed": open_count}
+
+
+class CancelLimitOrderRequest(BaseModel):
+    symbol: str
+    direction: str
+
+
+@app.post("/api/order/limit/cancel")
+async def cancel_limit_order_endpoint(req: CancelLimitOrderRequest):
+    trade_key = app_state.get_trade_key(req.symbol, req.direction)
+    pending   = app_state.pending_limit_orders.get(trade_key)
+    if not pending:
+        raise HTTPException(status_code=404, detail=f"No pending limit order for {trade_key}")
+    await cancel_pending_order(trade_key, pending, reason="[MANUAL CANCEL]")
+    return {"status": "ok", "symbol": req.symbol, "direction": req.direction}
 
 
 @app.delete("/api/alerts/stale")
