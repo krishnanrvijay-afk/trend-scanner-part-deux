@@ -312,6 +312,11 @@
       50% { opacity: 0.45; }
     }
     .sig-pulse { animation: pending-pulse 1.2s ease-in-out infinite; display: inline-block; }
+    @keyframes cancelled-flash {
+      0%   { opacity: 0; transform: scaleY(0.85); }
+      30%  { opacity: 1; transform: scaleY(1.02); }
+      100% { opacity: 1; transform: scaleY(1); }
+    }
 
     .alert-header-row {
       display: flex;
