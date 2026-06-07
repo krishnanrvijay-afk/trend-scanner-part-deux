@@ -175,16 +175,16 @@
       background: var(--surface2);
       padding: 10px 12px;
       text-align: right;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.08em;
+      letter-spacing: 1px;
       text-transform: uppercase;
-      color: var(--muted);
+      color: #ffffff;
       border-bottom: 1px solid var(--border);
       white-space: nowrap;
     }
     thead th:first-child { text-align: left; }
-    thead th.th-trend    { text-align: left; min-width: 100px; }
+    thead th.th-trend    { text-align: left; min-width: 130px; }
     thead th.th-gates    { text-align: center; }
     thead th.th-signal   { text-align: center; }
 
@@ -927,20 +927,29 @@
       <table>
         <thead>
           <tr>
-            <th style="text-align:left;width:54px">Symbol</th>
-            <th class="th-trend">
-              Trend
-              <br><span style="font-size:8px;font-weight:400;color:#333;letter-spacing:0.02em">●●● HIGH &middot; ●● STR &middot; ● REG</span>
-            </th>
-            <th style="text-align:right">PRICE<br><span style="font-size:8px;color:#555;font-weight:400">&Delta;24H</span></th>
-            <th style="text-align:center;width:90px">WALLS<br><span style="font-size:9px;color:#555;font-weight:400">BID &middot; ASK</span></th>
+            <th style="text-align:left;width:56px">SYM</th>
+            <th class="th-trend">TREND</th>
+            <th style="text-align:right">PRICE<br><span style="font-size:8px;color:#555;font-weight:400;text-transform:none;letter-spacing:0">&Delta;24H</span></th>
+            <th style="text-align:left;width:165px">BUYERS &middot; SELLERS</th>
             <th style="text-align:right;width:52px">ADX</th>
             <th class="th-gates">GATES</th>
-            <th class="th-signal">Signal</th>
+            <th class="th-signal">SIGNAL</th>
           </tr>
           <tr class="gates-subheader">
-            <td colspan="5"></td>
-            <td style="text-align:center;font-weight:700;color:#ffffff">T &middot; A &middot; D &middot; MA</td>
+            <td></td>
+            <td>
+              <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center">
+                <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,68,68,0.15);color:#ff4444;border:1px solid rgba(255,68,68,0.3)">&#9679;&#9679;&#9679; BEAR</span>
+                <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,170,0,0.12);color:#ffaa00;border:1px solid rgba(255,170,0,0.25)">&#9679;&#9679; STR</span>
+                <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.07);color:#fff;border:1px solid #333">&#9679; REG</span>
+                <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(0,255,136,0.12);color:#00ff88;border:1px solid rgba(0,255,136,0.3)">&#9679;&#9679;&#9679; BULL</span>
+                <span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:rgba(100,160,255,0.1);color:#66aaff;border:1px solid rgba(100,160,255,0.25)">&#9900; NEU</span>
+              </div>
+            </td>
+            <td></td>
+            <td style="text-align:center;font-size:9px;color:#444;font-weight:400;text-transform:none;letter-spacing:0">% &middot; wall price</td>
+            <td style="text-align:right;font-size:9px;color:#444;font-weight:400;text-transform:none;letter-spacing:0">14P</td>
+            <td style="text-align:center;font-size:9px;color:#444;font-weight:400;text-transform:none;letter-spacing:0">T &middot; A &middot; D &middot; MA</td>
             <td></td>
           </tr>
         </thead>
