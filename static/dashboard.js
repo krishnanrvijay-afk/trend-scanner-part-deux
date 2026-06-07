@@ -5,44 +5,7 @@ let lastScanCount = -1;
 let prevAlertTradeCount = -1;
 let activeMASymbol = null;
 let activeFilter = 'all';
-let viewMode = 'table'; // initialized properly in initViewMode()
 const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
-
-// ── View mode ─────────────────────────────────────────────────────────────────
-
-function initViewMode() {
-  const stored = localStorage.getItem('tsp_view_mode');
-  const mode   = stored || (window.innerWidth < 768 ? 'cards' : 'table');
-  viewMode = mode;
-  applyViewMode(mode);
-}
-
-function setViewMode(mode) {
-  viewMode = mode;
-  localStorage.setItem('tsp_view_mode', mode);
-  applyViewMode(mode);
-}
-
-function applyViewMode(mode) {
-  const tableLayout = document.querySelector('.scanner-layout');
-  const cardGrid    = document.getElementById('card-grid');
-  const filterBar   = document.getElementById('filter-bar');
-  const btnTable    = document.getElementById('view-btn-table');
-  const btnCards    = document.getElementById('view-btn-cards');
-  if (mode === 'cards') {
-    if (tableLayout) tableLayout.style.display = 'none';
-    if (cardGrid)    { cardGrid.style.display = 'grid'; }
-    if (filterBar)   filterBar.style.display = 'flex';
-    if (btnTable)    btnTable.classList.remove('active');
-    if (btnCards)    btnCards.classList.add('active');
-  } else {
-    if (tableLayout) tableLayout.style.display = '';
-    if (cardGrid)    cardGrid.style.display = 'none';
-    if (filterBar)   filterBar.style.display = 'none';
-    if (btnTable)    btnTable.classList.add('active');
-    if (btnCards)    btnCards.classList.remove('active');
-  }
-}
 
 function setFilter(f) {
   activeFilter = f;
@@ -467,139 +430,6 @@ function buildTrendPill(tp) {
     dot(0) + dot(1) + dot(2) +
     `<span style="color:${labelColor};font-weight:700;font-size:11px;margin-left:5px;letter-spacing:0.04em">${label}</span>` +
     `</div>`;
-}
-
-// ── Pair table render (single-row layout V4) ──────────────────────────────────
-
-function buildPairRowHtml(p) {
-  const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
-  const adx       = p.adx     ?? 0;
-  const bid       = p.bid_pct ?? 0;
-  const ask       = p.ask_pct ?? 0;
-  const bidWall   = p.bid_wall ?? null;
-  const askWall   = p.ask_wall ?? null;
-  const change24h = p.change_24h ?? null;
-
-  const isStale  = p.data_stale === true;
-  const isActive = p.symbol === activeMASymbol;
-  const symStyle = isStale ? 'color:#555;cursor:pointer' : 'cursor:pointer';
-  const symHtml  = `<span class="sym" style="${symStyle}" onclick="handleSymClick('${p.symbol}')">${p.symbol}${isStale ? '<span style="font-size:7px;color:#444;margin-left:2px">~</span>' : ''}</span>`;
-  const trendPill = buildTrendPill(p.trend_pill || 'NEUTRAL');
-
-  // Price column: stacked price + 24H change
-  let ch24Line;
-  if (change24h !== null && !isNaN(change24h)) {
-    const chColor = change24h > 0 ? '#00ff88' : change24h < 0 ? '#ff4444' : '#555';
-    const chSign  = change24h > 0 ? '+' : '';
-    ch24Line = `<span style="display:block;font-size:10px;color:${chColor};font-weight:700;font-family:'JetBrains Mono',monospace">(${chSign}${fmt(Math.abs(change24h), 1)}%)</span>`;
-  } else {
-    ch24Line = `<span style="display:block;font-size:10px;color:#555">(—)</span>`;
-  }
-  const priceHtml = `<span style="display:block;font-size:14px;font-weight:700;color:#fff;font-family:'JetBrains Mono',monospace">${fmtPrice(livePrice)}</span>${ch24Line}`;
-
-  // BUYERS · SELLERS combined pill column
-  const buyWallStr  = bidWall !== null ? fmtPrice(bidWall) : '—';
-  const sellWallStr = askWall !== null ? fmtPrice(askWall) : '—';
-  const buyPill  = `<div style="background:rgba(0,255,136,0.07);border:1px solid rgba(0,255,136,0.18);border-radius:10px;padding:3px 8px;display:flex;align-items:center;gap:4px;margin-bottom:2px">` +
-    `<span style="font-size:8px;color:#00ff88;font-weight:700;opacity:0.6">BUY</span>` +
-    `<span style="font-size:10px;color:#00ff88;font-weight:700">${fmt(bid, 1)}%</span>` +
-    `<span style="font-size:9px;color:#333">\u00b7</span>` +
-    `<span style="font-size:10px;color:#ffffff;font-weight:700;font-family:'JetBrains Mono',monospace">${buyWallStr}</span>` +
-    `</div>`;
-  const sellPill = `<div style="background:rgba(255,68,68,0.07);border:1px solid rgba(255,68,68,0.18);border-radius:10px;padding:3px 8px;display:flex;align-items:center;gap:4px">` +
-    `<span style="font-size:8px;color:#ff4444;font-weight:700;opacity:0.6">SELL</span>` +
-    `<span style="font-size:10px;color:#ff4444;font-weight:700">${fmt(ask, 1)}%</span>` +
-    `<span style="font-size:9px;color:#333">\u00b7</span>` +
-    `<span style="font-size:10px;color:#ffffff;font-weight:700;font-family:'JetBrains Mono',monospace">${sellWallStr}</span>` +
-    `</div>`;
-  const depthPillHtml = `<div style="display:flex;flex-direction:column">${buyPill}${sellPill}</div>`;
-
-  const adxColor = adx >= 30 ? '#00ff88' : '#666666';
-
-  const j5    = p.j5 ?? null;
-  const jColor = j5 === null ? '#444444' : j5 <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
-  const jHtml  = j5 !== null ? fmt(j5, 1) : '—';
-
-  const cdSecs = cooldownEndsAt[p.symbol]
-    ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
-    : (p.cooldown_remaining_seconds || 0);
-
-  const sigState = p.signal_state || 'SCANNING';
-  let sigCell;
-  switch (sigState) {
-    case 'IN_TRADE': {
-      const tlDir   = (state.open_trades || {})[`${p.symbol}LONG`] ? 'LONG' : 'SHORT';
-      const tlColor = tlDir === 'LONG' ? '#00ff88' : '#ff4444';
-      sigCell = `<span style="color:${tlColor};font-size:10px;font-weight:700;letter-spacing:.06em">▶ IN TRADE</span>`;
-      break;
-    }
-    case 'COOLDOWN': {
-      const cdM = Math.floor(cdSecs / 60);
-      const cdS = cdSecs % 60;
-      sigCell = `<span style="color:#666666;font-size:11px;white-space:nowrap">🕐 ${cdM}m${cdS < 10 ? '0' : ''}${cdS}s</span>`;
-      break;
-    }
-    case 'ALERT':
-      sigCell = `<span class="sig-pulse" style="color:#00ff88;font-size:10px;font-weight:700;letter-spacing:.04em">🔔 CONFIRMED</span>`;
-      break;
-    case 'PENDING':
-      sigCell = `<span style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.04em">⏳ PENDING</span>`;
-      break;
-    default:
-      sigCell = `<span style="color:#444444;font-size:11px">—</span>`;
-  }
-
-  const gs = p.gates_status || {};
-  const passCount = [gs.trend_pass, gs.adx_pass, gs.depth_pass, gs.ma_pass].filter(Boolean).length;
-  const nearMiss  = passCount === 3;
-  function gColor(pass) { return pass ? '#00ff88' : (nearMiss ? '#ffaa00' : '#444444'); }
-  const chk = v => v ? '✓' : '✗';
-  const tip = [
-    `TREND ${chk(gs.trend_pass)}`, `ADX ${chk(gs.adx_pass)}`,
-    `DEPTH ${chk(gs.depth_pass)}`, `MA STACK ${chk(gs.ma_pass)}`,
-  ].join(' · ');
-  const gatesCell = `<div class="gate-dots" title="${tip}">` +
-    `<span class="gate-dot" style="background:${gColor(gs.trend_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${gColor(gs.adx_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${gColor(gs.depth_pass)}"></span>` +
-    `<span class="gate-dot" style="background:${gColor(gs.ma_pass)}"></span>` +
-    `</div>`;
-
-  return `<tr data-symbol="${p.symbol}" class="pair-row-1${isActive ? ' active-sym' : ''}">` +
-    `<td style="text-align:left">${symHtml}</td>` +
-    `<td style="text-align:left">${trendPill}</td>` +
-    `<td class="price-cell" style="text-align:right">${priceHtml}</td>` +
-    `<td>${depthPillHtml}</td>` +
-    `<td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>` +
-    `<td style="color:${jColor};text-align:right;font-weight:700">${jHtml}</td>` +
-    `<td style="text-align:center">${gatesCell}</td>` +
-    `<td style="text-align:center">${sigCell}</td>` +
-    `</tr>`;
-}
-
-function renderPairTable() {
-  if (!state) return;
-  const tbody = document.getElementById('pair-tbody');
-  const pairs = state.pair_states || [];
-
-  if (pairs.length === 0) {
-    tbody.innerHTML = '<tr class="pair-row-1"><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
-    return;
-  }
-
-  let html = '';
-  for (const p of pairs) html += buildPairRowHtml(p);
-  tbody.innerHTML = html;
-
-  tbody.querySelectorAll('tr[data-symbol]').forEach(row => {
-    const sym = row.dataset.symbol;
-    row.addEventListener('mouseenter', () => {
-      tbody.querySelectorAll(`tr[data-symbol="${sym}"]`).forEach(r => r.classList.add('row-hover'));
-    });
-    row.addEventListener('mouseleave', () => {
-      tbody.querySelectorAll(`tr[data-symbol="${sym}"]`).forEach(r => r.classList.remove('row-hover'));
-    });
-  });
 }
 
 // ── Right side panel render ───────────────────────────────────────────────────
@@ -1570,16 +1400,41 @@ function renderCardGrid() {
     : `<div style="grid-column:1/-1;text-align:center;color:#444;padding:40px;font-size:11px">No pairs match this filter</div>`;
 }
 
+function renderMarketStrip() {
+  if (!state) return;
+  const strip = document.getElementById('market-strip');
+  if (!strip) return;
+  const ms = state.market_snapshot || {};
+  const tb = ms.trend_bias || {};
+  const mb = ms.momentum_bands || {};
+  const bears = (tb.strong_bear || []).length;
+  const bulls = (tb.strong_bull || []).length;
+  const neuts = (tb.neutral || []).length;
+  const ob    = (mb.overbought || []).length;
+  const os    = (mb.oversold   || []).length;
+  const regime = state.btc_regime || 'Neutral';
+  const regC   = regime === 'Strong Bull' ? '#00ff88' : regime === 'Strong Bear' ? '#ff4444' : '#ffaa00';
+  const regB   = regime === 'Strong Bull' ? 'rgba(0,255,136,0.3)' : regime === 'Strong Bear' ? 'rgba(255,68,68,0.3)' : 'rgba(255,170,0,0.3)';
+  const regL   = regime === 'Strong Bull' ? 'BTC ▲' : regime === 'Strong Bear' ? 'BTC ▼' : 'BTC ○';
+  const chip = (lbl, col, bdr) =>
+    `<span class="ms-chip" style="color:${col};border-color:${bdr}">${lbl}</span>`;
+  const sep = `<span class="ms-sep">·</span>`;
+  strip.innerHTML =
+    chip(`BEAR ${bears}`, '#ff4444', 'rgba(255,68,68,0.3)') + sep +
+    chip(`BULL ${bulls}`, '#00ff88', 'rgba(0,255,136,0.3)') + sep +
+    chip(`NEU ${neuts}`,  '#66aaff', 'rgba(100,160,255,0.2)') + sep +
+    chip(regL, regC, regB) + sep +
+    chip(`OB ${ob}`, '#ff4444', 'rgba(255,68,68,0.15)') + sep +
+    chip(`OS ${os}`, '#00ff88', 'rgba(0,255,136,0.15)');
+}
+
 function renderAll() {
   renderHeader();
   renderScanPulse();
-  if (viewMode === 'cards') {
-    renderCardGrid();
-  } else {
-    renderPairTable();
-    if (activeMASymbol) renderMAOverlay(activeMASymbol);
-    else renderSidePanel();
-  }
+  renderCardGrid();
+  renderMarketStrip();
+  if (activeMASymbol) renderMAOverlay(activeMASymbol);
+  else renderSidePanel();
   renderAlerts();
   renderTradeLog();
   updateAlertBadge();
@@ -1784,4 +1639,3 @@ try {
 // Initial load + 1s refresh
 poll();
 setInterval(poll, 1000);
-initViewMode();
