@@ -224,6 +224,22 @@ def get_trend_strength(adx: float, trend: str) -> str:
     return "NEUTRAL"
 
 
+def get_directional_trend_strength(adx: float, trend: str) -> str:
+    """Return combined direction+tier label for trend pill display."""
+    if trend == "Neutral":
+        return "NEUTRAL"
+    suffix = "BULL" if trend == "Strong Bull" else "BEAR"
+    if adx >= 60:
+        tier = "HIGH_PROB"
+    elif adx >= 40:
+        tier = "STRONG"
+    elif adx >= 25:
+        tier = "REGULAR"
+    else:
+        return "NEUTRAL"
+    return f"{tier}_{suffix}"
+
+
 def get_ma_values(df_1h: pd.DataFrame) -> tuple[float, float, float]:
     close = df_1h["close"]
     return (
@@ -629,6 +645,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "price":          price,
         "trend":          trend,
         "trend_strength": trend_strength,
+        "trend_pill":     get_directional_trend_strength(adx_1h, trend),
         "adx":            round(adx_1h, 1),
         "j5":             j1h_clamped,   # kept as j5 for JS compatibility
         "bid_pct":        round(bid_pct, 1),
