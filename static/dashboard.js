@@ -304,14 +304,11 @@ function renderHeader() {
     pnlEl.style.color = pnlColor;
   }
 
-  const sessionLabel = state.session_label || 'CLOSED';
-  const sessionEl    = document.getElementById('hc-session');
-  if (sessionEl) {
-    const sessionColor = sessionLabel === 'CLOSED' ? '#444444'
-      : sessionLabel === 'EU+US'      ? '#00ff88'
-      : '#ffaa00';
-    sessionEl.textContent = sessionLabel;
-    sessionEl.style.color = sessionColor;
+  const sessionEl = document.getElementById('hc-session');
+  if (sessionEl && !sessionEl.dataset.set) {
+    sessionEl.textContent  = 'ALWAYS OPEN';
+    sessionEl.style.color  = '#00ff88';
+    sessionEl.dataset.set  = '1';
   }
 
   const btcRegime = state.btc_regime || 'Neutral';
@@ -448,18 +445,40 @@ function buildPairRowHtml(p) {
   const askWall    = p.ask_wall ?? null;
   const change24h  = p.change_24h ?? null;
 
-  const symHtml   = `<span class="sym">${p.symbol}</span>`;
+  const isStale   = p.data_stale === true;
+  const symHtml   = `<span class="sym" style="${isStale ? 'color:#555' : ''}">${p.symbol}${isStale ? '<span style="font-size:7px;color:#444;margin-left:2px">~</span>' : ''}</span>`;
   const trendDots = buildTrendDots(p.trend || 'Neutral', adx);
 
-  let changeHtml = `<span style="color:#444">—</span>`;
+  // Price column: stacked price + 24H change
+  let ch24Line;
   if (change24h !== null && !isNaN(change24h)) {
-    const chColor = change24h >= 0 ? '#00ff88' : '#ff4444';
-    const chSign  = change24h >= 0 ? '+' : '';
-    changeHtml = `<span style="color:${chColor};font-weight:700">${chSign}${fmt(Math.abs(change24h), 1)}%</span>`;
+    const chColor = change24h > 0 ? '#00ff88' : change24h < 0 ? '#ff4444' : '#555';
+    const chSign  = change24h > 0 ? '+' : '';
+    ch24Line = `<span style="display:block;font-size:10px;color:${chColor};font-weight:700;font-family:'JetBrains Mono',monospace">(${chSign}${fmt(Math.abs(change24h), 1)}%)</span>`;
+  } else {
+    ch24Line = `<span style="display:block;font-size:10px;color:#555">(—)</span>`;
+  }
+  const priceHtml = `<span style="display:block;font-size:14px;font-weight:700;color:#fff;font-family:'JetBrains Mono',monospace">${fmtPrice(livePrice)}</span>${ch24Line}`;
+
+  // Walls column: stacked bid + ask pills
+  let wallsHtml;
+  if (bidWall === null && askWall === null) {
+    wallsHtml = `<span style="color:#555">—</span>`;
+  } else {
+    const bPill = bidWall !== null
+      ? `<div style="background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:10px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;margin-bottom:2px">` +
+        `<span style="font-size:8px;color:#555">B</span>` +
+        `<span style="font-size:10px;font-weight:700;color:#00ff88;font-family:'JetBrains Mono',monospace">${fmtPrice(bidWall)}</span></div>`
+      : '';
+    const aPill = askWall !== null
+      ? `<div style="background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.2);border-radius:10px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px">` +
+        `<span style="font-size:8px;color:#555">A</span>` +
+        `<span style="font-size:10px;font-weight:700;color:#ff4444;font-family:'JetBrains Mono',monospace">${fmtPrice(askWall)}</span></div>`
+      : '';
+    wallsHtml = `<div style="display:flex;flex-direction:column;align-items:center">${bPill}${aPill}</div>`;
   }
 
   const adxColor = adx >= 30 ? '#00ff88' : '#666666';
-  const j5Color  = j5  <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
 
   const cdSecs = cooldownEndsAt[p.symbol]
     ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
@@ -512,28 +531,23 @@ function buildPairRowHtml(p) {
   const row1 = `<tr data-symbol="${p.symbol}" class="pair-row-1">` +
     `<td style="text-align:left">${symHtml}</td>` +
     `<td style="text-align:left">${trendDots}</td>` +
-    `<td class="price-cell">${fmtPrice(livePrice)}</td>` +
-    `<td>${changeHtml}</td>` +
-    `<td style="color:${adxColor}">${fmt(adx, 1)}</td>` +
-    `<td style="color:${j5Color}">${j5 > 100 ? '100+' : j5 < 0 ? '0-' : fmt(j5, 1)}</td>` +
+    `<td class="price-cell" style="text-align:right">${priceHtml}</td>` +
+    `<td style="text-align:center">${wallsHtml}</td>` +
+    `<td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>` +
     `<td style="text-align:center">${gatesCell}</td>` +
     `<td style="text-align:center">${sigCell}</td>` +
     `</tr>`;
 
   const row2 = `<tr data-symbol="${p.symbol}" class="pair-row-2">` +
-    `<td colspan="8" style="padding:0">` +
+    `<td colspan="7" style="padding:0">` +
     `<div class="depth-strip">` +
     `<div class="depth-buyers">` +
     `<span class="ds-label ds-label-buy">BUYERS</span>` +
     `<span class="ds-pct ds-pct-buy">${fmt(bid, 1)}%</span>` +
-    `<span class="ds-wall-lbl">WALL</span>` +
-    `<span class="ds-wall-val">${bidWallStr}</span>` +
     `</div><div class="ds-divider"></div>` +
     `<div class="depth-sellers">` +
     `<span class="ds-label ds-label-sell">SELLERS</span>` +
     `<span class="ds-pct ds-pct-sell">${fmt(ask, 1)}%</span>` +
-    `<span class="ds-wall-lbl">WALL</span>` +
-    `<span class="ds-wall-val">${askWallStr}</span>` +
     `</div></div></td></tr>`;
 
   return row1 + row2;
@@ -545,7 +559,7 @@ function renderPairTable() {
   const pairs = state.pair_states || [];
 
   if (pairs.length === 0) {
-    tbody.innerHTML = '<tr class="pair-row-1"><td colspan="8" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
+    tbody.innerHTML = '<tr class="pair-row-1"><td colspan="7" style="text-align:center;color:var(--muted);padding:30px;">No data yet — first scan in progress…</td></tr>';
     return;
   }
 
@@ -639,12 +653,9 @@ function renderSidePanel() {
 
   const sessEl = document.getElementById('sp-session');
   if (sessEl) {
-    const session   = state.session_label || 'CLOSED';
-    const sessColor = session === 'CLOSED' ? '#ff4444' : '#00ff88';
-    const sessBg    = session === 'CLOSED' ? 'rgba(255,68,68,0.1)' : 'rgba(0,255,136,0.1)';
-    const sessBdr   = session === 'CLOSED' ? 'rgba(255,68,68,0.3)' : 'rgba(0,255,136,0.3)';
-    sessEl.innerHTML = `<div class="sp-session-badge" style="background:${sessBg};border:1px solid ${sessBdr}">` +
-      `<div class="sp-session-text" style="color:${sessColor}">${session}</div>` +
+    sessEl.innerHTML =
+      `<div class="sp-session-badge" style="background:rgba(0,255,136,0.1);border:1px solid rgba(0,255,136,0.3)">` +
+      `<div class="sp-session-text" style="color:#00ff88">ALL SESSIONS OPEN</div>` +
       `</div>`;
   }
 }
