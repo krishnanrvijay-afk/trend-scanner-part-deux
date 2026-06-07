@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOUNCE PAIR RESEARCH</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #080808; color: #fff; font-family: 'Inter', sans-serif; font-size: 13px; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid #1a1a1a; background: #0a0a0a; }
+  .title { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 3px; }
+  .title span { color: #00ff88; }
+  .load-btn { background: #00ff88; color: #000; border: none; padding: 8px 18px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; cursor: pointer; border-radius: 4px; }
+
+  .tf-tabs { display: flex; gap: 2px; padding: 12px 24px 0; border-bottom: 1px solid #1a1a1a; background: #0a0a0a; }
+  .tf-tab { padding: 7px 16px; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #555; cursor: pointer; border-bottom: 2px solid transparent; }
+  .tf-tab.active { color: #00ff88; border-bottom-color: #00ff88; }
+
+  .content { padding: 20px 24px; }
+
+  .empty { text-align: center; padding: 80px 20px; color: #444; }
+  .empty .big { font-family: 'Bebas Neue', sans-serif; font-size: 36px; letter-spacing: 3px; color: #222; margin-bottom: 10px; }
+  .empty code { background: #111; padding: 2px 6px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; color: #00ff88; font-size: 11px; }
+
+  /* SUMMARY CARDS */
+  .summary-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 20px; }
+  .scard { background: #0f0f0f; border: 1px solid #1a1a1a; border-radius: 6px; padding: 12px 16px; }
+  .scard .sl { font-size: 9px; font-weight: 700; color: #fff; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 5px; }
+  .scard .sv { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; }
+  .scard .ss { font-size: 10px; color: #555; margin-top: 2px; }
+
+  /* RANKING TABLE */
+  .table-wrap { background: #0f0f0f; border: 1px solid #1a1a1a; border-radius: 6px; overflow: hidden; margin-bottom: 20px; }
+  .table-hdr { padding: 10px 16px; border-bottom: 1px solid #1a1a1a; font-family: 'Bebas Neue', sans-serif; font-size: 13px; letter-spacing: 2px; color: #555; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { padding: 8px 12px; text-align: left; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #ffffff; border-bottom: 1px solid #1a1a1a; background: #111; white-space: nowrap; }
+  thead th.right { text-align: right; }
+  tbody tr { border-bottom: 1px solid #0d0d0d; transition: background 0.1s; cursor: pointer; }
+  tbody tr:hover { background: #111; }
+  tbody tr:last-child { border-bottom: none; }
+  td { padding: 9px 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: nowrap; }
+  td.right { text-align: right; }
+  td.sym { font-family: 'Bebas Neue', sans-serif; font-size: 16px; color: #fff; }
+
+  .rating-pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: 700; }
+  .r-excellent { background: rgba(0,255,136,0.12); color: #00ff88; border: 1px solid rgba(0,255,136,0.3); }
+  .r-good      { background: rgba(255,170,0,0.1);  color: #ffaa00; border: 1px solid rgba(255,170,0,0.25); }
+  .r-fair      { background: rgba(255,255,255,0.05); color: #888; border: 1px solid #2a2a2a; }
+  .r-poor      { background: rgba(255,68,68,0.08);  color: #ff4444; border: 1px solid rgba(255,68,68,0.2); }
+
+  .current-badge { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 8px; font-weight: 700; background: rgba(0,255,136,0.08); color: #00ff88; border: 1px solid rgba(0,255,136,0.2); margin-left: 4px; }
+  .new-badge     { display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 8px; font-weight: 700; background: rgba(100,160,255,0.08); color: #66aaff; border: 1px solid rgba(100,160,255,0.2); margin-left: 4px; }
+
+  .score-bar-wrap { width: 60px; height: 4px; background: #1a1a1a; border-radius: 2px; display: inline-block; vertical-align: middle; margin-left: 6px; overflow: hidden; }
+  .score-bar { height: 100%; border-radius: 2px; }
+
+  /* METRIC COLORS */
+  .green  { color: #00ff88; font-weight: 700; }
+  .amber  { color: #ffaa00; font-weight: 700; }
+  .red    { color: #ff4444; font-weight: 700; }
+  .white  { color: #fff; font-weight: 700; }
+  .grey   { color: #555; }
+
+  /* RECOMMENDATION CARDS */
+  .rec-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 20px; }
+  .rec-card { background: #0f0f0f; border: 1px solid #1a1a1a; border-radius: 6px; padding: 14px; }
+  .rec-title { font-size: 10px; font-weight: 700; color: #fff; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #1a1a1a; }
+  .rec-pairs { display: flex; flex-wrap: wrap; gap: 5px; }
+  .rec-pair { font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 4px; }
+  .rp-keep { background: rgba(0,255,136,0.1); color: #00ff88; border: 1px solid rgba(0,255,136,0.25); }
+  .rp-drop { background: rgba(255,68,68,0.1);  color: #ff4444; border: 1px solid rgba(255,68,68,0.25); }
+  .rp-add  { background: rgba(100,160,255,0.1); color: #66aaff; border: 1px solid rgba(100,160,255,0.25); }
+
+  /* DETAIL PANEL */
+  .detail-panel { background: #0f0f0f; border: 1px solid #1a1a1a; border-radius: 6px; padding: 16px; margin-bottom: 20px; display: none; }
+  .detail-panel.visible { display: block; }
+  .detail-title { font-family: 'Bebas Neue', sans-serif; font-size: 18px; letter-spacing: 2px; color: #00ff88; margin-bottom: 12px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+  .detail-tf { background: #111; border: 1px solid #1a1a1a; border-radius: 4px; padding: 12px; }
+  .detail-tf-label { font-size: 9px; font-weight: 700; color: #fff; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+  .drow { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 10px; }
+  .dl { color: #ffffff; font-weight: 700; }
+  .dv { font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="title">BOUNCE PAIR <span>RESEARCH</span></div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <span id="load-status" style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#555;"></span>
+    <button class="load-btn" onclick="document.getElementById('file-input').click()">LOAD bounce_research.json</button>
+  </div>
+</div>
+
+<div class="tf-tabs">
+  <div class="tf-tab active" onclick="switchTF('ranking',this)">RANKING</div>
+  <div class="tf-tab" onclick="switchTF('5m',this)">5M ANALYSIS</div>
+  <div class="tf-tab" onclick="switchTF('15m',this)">15M ANALYSIS</div>
+  <div class="tf-tab" onclick="switchTF('1h',this)">1H ANALYSIS</div>
+  <div class="tf-tab" onclick="switchTF('recommendations',this)">RECOMMENDATIONS</div>
+</div>
+
+<div class="content" id="main-content">
+  <div class="empty">
+    <div class="big">NO DATA LOADED</div>
+    <p>Run the script first then load the output.<br><br>
+    <b>Step 1:</b> <code>pip install requests pandas numpy</code><br><br>
+    <b>Step 2:</b> <code>python hl_bounce_research.py</code><br><br>
+    <b>Step 3:</b> Click LOAD bounce_research.json above</p>
+  </div>
+</div>
+
+<input type="file" id="file-input" accept=".json" onchange="onFile(event)">
+
+<script>
+let DATA = null;
+let currentTF = 'ranking';
+let selectedPair = null;
+
+function onFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      DATA = JSON.parse(ev.target.result);
+      document.getElementById('load-status').textContent =
+        `✓ ${Object.keys(DATA.pairs).length} pairs loaded`;
+      renderCurrent();
+    } catch(err) { alert('Parse error: ' + err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function switchTF(tf, el) {
+  currentTF = tf;
+  document.querySelectorAll('.tf-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  renderCurrent();
+}
+
+function renderCurrent() {
+  if (!DATA) return;
+  if (currentTF === 'ranking') renderRanking();
+  else if (currentTF === 'recommendations') renderRecommendations();
+  else renderTF(currentTF);
+}
+
+function ratingClass(r) {
+  return { EXCELLENT:'r-excellent', GOOD:'r-good', FAIR:'r-fair', POOR:'r-poor' }[r] || 'r-fair';
+}
+
+function scoreColor(s) {
+  if (s >= 75) return '#00ff88';
+  if (s >= 55) return '#ffaa00';
+  if (s >= 35) return '#888';
+  return '#ff4444';
+}
+
+function fmt(v, dec=1) { return v != null ? Number(v).toFixed(dec) : '—'; }
+
+function renderRanking() {
+  const pairs = DATA.ranking || Object.keys(DATA.pairs);
+  let excellent=0, good=0, fair=0, poor=0;
+  pairs.forEach(s => {
+    const r = DATA.pairs[s]?.overall_rating;
+    if (r==='EXCELLENT') excellent++;
+    else if (r==='GOOD') good++;
+    else if (r==='FAIR') fair++;
+    else poor++;
+  });
+
+  let html = `
+    <div class="summary-row">
+      <div class="scard"><div class="sl">Excellent Bounce</div><div class="sv green">${excellent}</div><div class="ss">Score ≥ 75</div></div>
+      <div class="scard"><div class="sl">Good Bounce</div><div class="sv amber">${good}</div><div class="ss">Score 55-74</div></div>
+      <div class="scard"><div class="sl">Fair Bounce</div><div class="sv white">${fair}</div><div class="ss">Score 35-54</div></div>
+      <div class="scard"><div class="sl">Poor Bounce</div><div class="sv red">${poor}</div><div class="ss">Score &lt; 35</div></div>
+    </div>
+    <div class="table-wrap">
+      <div class="table-hdr">OVERALL BOUNCE RANKING — WEIGHTED 5M·15M·1H</div>
+      <table><thead><tr>
+        <th>RANK</th><th>SYMBOL</th><th>OVERALL</th><th>RATING</th>
+        <th class="right">J FREQ%</th><th class="right">REVERSAL%</th>
+        <th class="right">DURATION</th><th class="right">MA30 BOUNCE%</th>
+        <th class="right">REV SPEED</th><th class="right">ATR%</th>
+      </tr></thead><tbody>`;
+
+  pairs.forEach((sym, idx) => {
+    const d  = DATA.pairs[sym];
+    const sc = d?.overall_score || 0;
+    const rt = d?.overall_rating || '—';
+    const tf1h = d?.timeframes?.['1h'] || {};
+    const badge = d?.is_current_pair
+      ? '<span class="current-badge">CURRENT</span>'
+      : '<span class="new-badge">NEW</span>';
+    const barW = Math.round(sc);
+    const barCol = scoreColor(sc);
+    html += `<tr onclick="selectPair('${sym}')">
+      <td class="grey">${idx+1}</td>
+      <td class="sym">${sym}${badge}</td>
+      <td>
+        <span style="color:${barCol};font-weight:700;">${sc}</span>
+        <div class="score-bar-wrap"><div class="score-bar" style="width:${barW}%;background:${barCol};"></div></div>
+      </td>
+      <td><span class="rating-pill ${ratingClass(rt)}">${rt}</span></td>
+      <td class="right ${tf1h.j_extreme_pct>=20?'green':tf1h.j_extreme_pct>=10?'amber':'grey'}">${fmt(tf1h.j_extreme_pct)}%</td>
+      <td class="right ${tf1h.avg_reversal_rate>=65?'green':tf1h.avg_reversal_rate>=50?'amber':'red'}">${fmt(tf1h.avg_reversal_rate)}%</td>
+      <td class="right ${tf1h.avg_extreme_duration<=3?'green':tf1h.avg_extreme_duration<=6?'amber':'red'}">${fmt(tf1h.avg_extreme_duration)}</td>
+      <td class="right ${tf1h.ma30_bounce_rate>=60?'green':tf1h.ma30_bounce_rate>=45?'amber':'grey'}">${fmt(tf1h.ma30_bounce_rate)}%</td>
+      <td class="right ${tf1h.avg_reversion_speed<=5?'green':tf1h.avg_reversion_speed<=10?'amber':'red'}">${fmt(tf1h.avg_reversion_speed)}</td>
+      <td class="right amber">${fmt(tf1h.avg_atr_pct,3)}%</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  html += `<div class="detail-panel" id="detail-panel"></div>`;
+  document.getElementById('main-content').innerHTML = html;
+  if (selectedPair) selectPair(selectedPair);
+}
+
+function selectPair(sym) {
+  selectedPair = sym;
+  const panel = document.getElementById('detail-panel');
+  if (!panel) return;
+  const d = DATA.pairs[sym];
+  if (!d) return;
+
+  let html = `<div class="detail-title">${sym} — DETAILED BOUNCE METRICS</div><div class="detail-grid">`;
+  ['5m','15m','1h'].forEach(tf => {
+    const t = d.timeframes?.[tf] || {};
+    html += `<div class="detail-tf">
+      <div class="detail-tf-label">${tf.toUpperCase()} TIMEFRAME — Score ${t.bounce_score||'—'}/100</div>
+      ${row('J Overbought count', t.j_ob_count, '')}
+      ${row('J Oversold count', t.j_os_count, '')}
+      ${row('J Extreme %', fmt(t.j_extreme_pct)+'%', t.j_extreme_pct>=20?'green':t.j_extreme_pct>=10?'amber':'red')}
+      ${row('Avg extreme duration', fmt(t.avg_extreme_duration)+' candles', t.avg_extreme_duration<=3?'green':t.avg_extreme_duration<=6?'amber':'red')}
+      ${row('OB reversal rate', fmt(t.ob_reversal_rate)+'%', t.ob_reversal_rate>=65?'green':t.ob_reversal_rate>=50?'amber':'red')}
+      ${row('OS reversal rate', fmt(t.os_reversal_rate)+'%', t.os_reversal_rate>=65?'green':t.os_reversal_rate>=50?'amber':'red')}
+      ${row('Avg reversal rate', fmt(t.avg_reversal_rate)+'%', t.avg_reversal_rate>=65?'green':t.avg_reversal_rate>=50?'amber':'red')}
+      ${row('Mean reversion speed', fmt(t.avg_reversion_speed)+' candles', t.avg_reversion_speed<=5?'green':t.avg_reversion_speed<=10?'amber':'red')}
+      ${row('MA30 bounce rate', fmt(t.ma30_bounce_rate)+'%', t.ma30_bounce_rate>=60?'green':t.ma30_bounce_rate>=45?'amber':'grey')}
+      ${row('Avg ATR %', fmt(t.avg_atr_pct,3)+'%', 'amber')}
+      ${row('Vol consistency (CV)', fmt(t.vol_cv,2), t.vol_cv<=1?'green':t.vol_cv<=2?'amber':'red')}
+    </div>`;
+  });
+  html += `</div>`;
+  panel.innerHTML = html;
+  panel.classList.add('visible');
+  panel.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+function row(label, value, colorClass) {
+  return `<div class="drow"><span class="dl">${label}</span><span class="dv ${colorClass}">${value}</span></div>`;
+}
+
+function renderTF(tf) {
+  const pairs = DATA.ranking || Object.keys(DATA.pairs);
+  let html = `<div class="table-wrap">
+    <div class="table-hdr">${tf.toUpperCase()} TIMEFRAME — BOUNCE METRICS</div>
+    <table><thead><tr>
+      <th>SYMBOL</th><th>SCORE</th><th>RATING</th>
+      <th class="right">J FREQ%</th><th class="right">OB COUNT</th><th class="right">OS COUNT</th>
+      <th class="right">AVG DURATION</th><th class="right">OB REVERSAL%</th>
+      <th class="right">OS REVERSAL%</th><th class="right">REV SPEED</th>
+      <th class="right">MA30 BOUNCE%</th><th class="right">ATR%</th>
+    </tr></thead><tbody>`;
+
+  pairs.forEach(sym => {
+    const t = DATA.pairs[sym]?.timeframes?.[tf] || {};
+    if (t.error) return;
+    const sc = t.bounce_score || 0;
+    const rt = t.bounce_rating || '—';
+    html += `<tr onclick="selectPair('${sym}')">
+      <td class="sym">${sym}</td>
+      <td><span style="color:${scoreColor(sc)};font-weight:700;">${sc}</span></td>
+      <td><span class="rating-pill ${ratingClass(rt)}">${rt}</span></td>
+      <td class="right ${t.j_extreme_pct>=20?'green':t.j_extreme_pct>=10?'amber':'grey'}">${fmt(t.j_extreme_pct)}%</td>
+      <td class="right white">${t.j_ob_count||'—'}</td>
+      <td class="right white">${t.j_os_count||'—'}</td>
+      <td class="right ${t.avg_extreme_duration<=3?'green':t.avg_extreme_duration<=6?'amber':'red'}">${fmt(t.avg_extreme_duration)}</td>
+      <td class="right ${t.ob_reversal_rate>=65?'green':t.ob_reversal_rate>=50?'amber':'red'}">${fmt(t.ob_reversal_rate)}%</td>
+      <td class="right ${t.os_reversal_rate>=65?'green':t.os_reversal_rate>=50?'amber':'red'}">${fmt(t.os_reversal_rate)}%</td>
+      <td class="right ${t.avg_reversion_speed<=5?'green':t.avg_reversion_speed<=10?'amber':'red'}">${fmt(t.avg_reversion_speed)}</td>
+      <td class="right ${t.ma30_bounce_rate>=60?'green':t.ma30_bounce_rate>=45?'amber':'grey'}">${fmt(t.ma30_bounce_rate)}%</td>
+      <td class="right amber">${fmt(t.avg_atr_pct,3)}%</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  html += `<div class="detail-panel" id="detail-panel"></div>`;
+  document.getElementById('main-content').innerHTML = html;
+  if (selectedPair) selectPair(selectedPair);
+}
+
+function renderRecommendations() {
+  const pairs = DATA.ranking || Object.keys(DATA.pairs);
+  const keep = pairs.filter(s => DATA.pairs[s]?.is_current_pair && DATA.pairs[s]?.overall_score >= 55);
+  const drop = pairs.filter(s => DATA.pairs[s]?.is_current_pair && DATA.pairs[s]?.overall_score < 35);
+  const add  = pairs.filter(s => !DATA.pairs[s]?.is_current_pair && DATA.pairs[s]?.overall_score >= 55).slice(0,6);
+  const excellent = pairs.filter(s => DATA.pairs[s]?.overall_score >= 75);
+
+  const makeChips = (list, cls) => list.map(s =>
+    `<div class="rec-pair ${cls}">${s} ${fmt(DATA.pairs[s]?.overall_score)}</div>`
+  ).join('');
+
+  let html = `
+    <div class="summary-row">
+      <div class="scard"><div class="sl">Keep (current good)</div><div class="sv green">${keep.length}</div></div>
+      <div class="scard"><div class="sl">Drop (current poor)</div><div class="sv red">${drop.length}</div></div>
+      <div class="scard"><div class="sl">Add (new candidates)</div><div class="sv blue" style="color:#66aaff;">${add.length}</div></div>
+      <div class="scard"><div class="sl">Excellent overall</div><div class="sv green">${excellent.length}</div></div>
+    </div>
+    <div class="rec-grid">
+      <div class="rec-card">
+        <div class="rec-title" style="color:#00ff88;">✓ KEEP — Current pairs with good bounce</div>
+        <div class="rec-pairs">${makeChips(keep,'rp-keep')}</div>
+        ${keep.length===0?'<div style="color:#555;font-size:11px;margin-top:8px;">Run script to populate</div>':''}
+      </div>
+      <div class="rec-card">
+        <div class="rec-title" style="color:#ff4444;">✗ CONSIDER DROPPING — Poor bounce behavior</div>
+        <div class="rec-pairs">${makeChips(drop,'rp-drop')}</div>
+        ${drop.length===0?'<div style="color:#555;font-size:11px;margin-top:8px;">No drops recommended</div>':''}
+      </div>
+      <div class="rec-card">
+        <div class="rec-title" style="color:#66aaff;">+ ADD — New candidates with strong bounce</div>
+        <div class="rec-pairs">${makeChips(add,'rp-add')}</div>
+        ${add.length===0?'<div style="color:#555;font-size:11px;margin-top:8px;">No additions recommended</div>':''}
+      </div>
+    </div>`;
+
+  document.getElementById('main-content').innerHTML = html;
+}
+</script>
+</body>
+</html>
