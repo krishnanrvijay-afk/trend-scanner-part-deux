@@ -4,7 +4,53 @@ let state = null;
 let lastScanCount = -1;
 let prevAlertTradeCount = -1;
 let activeMASymbol = null;
+let activeFilter = 'all';
+let viewMode = 'table'; // initialized properly in initViewMode()
 const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
+
+// ── View mode ─────────────────────────────────────────────────────────────────
+
+function initViewMode() {
+  const stored = localStorage.getItem('tsp_view_mode');
+  const mode   = stored || (window.innerWidth < 768 ? 'cards' : 'table');
+  viewMode = mode;
+  applyViewMode(mode);
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  localStorage.setItem('tsp_view_mode', mode);
+  applyViewMode(mode);
+}
+
+function applyViewMode(mode) {
+  const tableLayout = document.querySelector('.scanner-layout');
+  const cardGrid    = document.getElementById('card-grid');
+  const filterBar   = document.getElementById('filter-bar');
+  const btnTable    = document.getElementById('view-btn-table');
+  const btnCards    = document.getElementById('view-btn-cards');
+  if (mode === 'cards') {
+    if (tableLayout) tableLayout.style.display = 'none';
+    if (cardGrid)    { cardGrid.style.display = 'grid'; }
+    if (filterBar)   filterBar.style.display = 'flex';
+    if (btnTable)    btnTable.classList.remove('active');
+    if (btnCards)    btnCards.classList.add('active');
+  } else {
+    if (tableLayout) tableLayout.style.display = '';
+    if (cardGrid)    cardGrid.style.display = 'none';
+    if (filterBar)   filterBar.style.display = 'none';
+    if (btnTable)    btnTable.classList.add('active');
+    if (btnCards)    btnCards.classList.remove('active');
+  }
+}
+
+function setFilter(f) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-pill').forEach(el => el.classList.remove('active'));
+  const pill = document.querySelector(`.filter-pill[data-filter="${f}"]`);
+  if (pill) pill.classList.add('active');
+  renderCardGrid();
+}
 
 // Tier-based cancel cycle counts (must match config.py)
 const STRONG_CANCEL_CYCLES_JS  = 2;
@@ -1357,12 +1403,183 @@ function renderMAOverlay(sym) {
   if (contentEl) contentEl.innerHTML = blocksHtml + alignHtml;
 }
 
+// ── Card grid ─────────────────────────────────────────────────────────────────
+
+function pillHtml(label, val, valColor, bgTint) {
+  const bg = bgTint ? `background:${bgTint};` : '';
+  return `<div class="card-pill" style="${bg}">` +
+    `<span class="card-pill-label">${label}</span>` +
+    `<span class="card-pill-val" style="color:${valColor}">${val}</span>` +
+    `</div>`;
+}
+
+function buildPairCard(p) {
+  const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
+  const sst = p.signal_state || 'SCANNING';
+  const ts  = p.trend_strength || 'NEUTRAL';
+  const tp  = p.trend_pill || 'NEUTRAL';
+
+  // Card border classes
+  let cc = 'pair-card';
+  if (sst === 'PENDING') cc += ' state-pending';
+  else if (sst === 'ALERT') cc += ' state-alert';
+  else if (sst === 'IN_TRADE') cc += ' state-trade';
+  if (ts === 'HIGH_PROB') cc += (tp.endsWith('_BULL') ? ' hp-bull' : ' hp-bear');
+  else if (ts === 'STRONG') cc += ' card-strong';
+
+  // ── ROW 1: Identity + Price ────────────────────────────────────────────────
+  const tpHtml = buildTrendPill(tp);
+
+  const gs = p.gates_status || {};
+  const passCount = [gs.trend_pass, gs.adx_pass, gs.depth_pass, gs.ma_pass].filter(Boolean).length;
+  const nearMiss  = passCount === 3;
+  const gDot = pass => `<span style="width:5px;height:5px;border-radius:50%;display:inline-block;background:${pass ? '#00ff88' : (nearMiss ? '#ffaa00' : '#333')}"></span>`;
+  const gatesDots = `<div style="background:#111;border:1px solid #1e1e1e;border-radius:6px;padding:2px 5px;display:flex;align-items:center;gap:3px;flex-shrink:0">` +
+    gDot(gs.trend_pass) + gDot(gs.adx_pass) + gDot(gs.depth_pass) + gDot(gs.ma_pass) + `</div>`;
+
+  const ch = p.change_24h ?? null;
+  const chColor = ch === null ? '#555' : ch > 0 ? '#00ff88' : ch < 0 ? '#ff4444' : '#555';
+  const chStr   = ch !== null ? `${ch > 0 ? '+' : ''}${fmt(Math.abs(ch), 1)}%` : '';
+
+  const row1 = `<div class="card-row1">` +
+    `<div class="card-identity">` +
+    `<span class="card-sym">${p.symbol}</span>${tpHtml}${gatesDots}` +
+    `</div>` +
+    `<div class="card-price-col">` +
+    `<span class="card-price">${fmtPrice(livePrice)}</span>` +
+    `<span style="font-size:9px;font-weight:700;color:${chColor};display:block;text-align:right">${chStr}</span>` +
+    `</div></div>`;
+
+  // ── ROW 2: Indicator pills ─────────────────────────────────────────────────
+  const adx = p.adx ?? 0;
+  const adxColor = adx >= 50 ? '#00ff88' : adx >= 25 ? '#ffaa00' : '#555555';
+  const j1h = p.j5 ?? null;
+  const j1hC = j1h === null ? '#555' : j1h <= 20 ? '#00ff88' : j1h >= 80 ? '#ff4444' : '#ffffff';
+  const j15m = p.j_15m ?? null;
+  const j15mC = j15m === null ? '#555' : j15m <= 20 ? '#00ff88' : j15m >= 80 ? '#ff4444' : '#ffffff';
+  const j5m = p.j_5m ?? null;
+  const j5mC = j5m === null ? '#555' : j5m <= 20 ? '#00ff88' : j5m >= 80 ? '#ff4444' : '#ffffff';
+
+  let fundPill = '';
+  const fr = p.funding_rate ?? null;
+  if (fr !== null) {
+    const frPct = fr * 100;
+    const frC = Math.abs(frPct) < 0.001 ? '#555' : frPct < 0 ? '#00ff88' : '#ff4444';
+    fundPill = pillHtml('FUND', `${frPct >= 0 ? '+' : ''}${frPct.toFixed(4)}%`, frC);
+  }
+
+  const ot = state.open_trades || {};
+  const trade = ot[`${p.symbol}LONG`] || ot[`${p.symbol}SHORT`];
+  let volOrPnl = '';
+  if (trade) {
+    const pnlV = trade.unrealized_pnl ?? null;
+    const rV   = trade.r ?? null;
+    const pnlC = pnlV === null ? '#555' : pnlV >= 0 ? '#00ff88' : '#ff4444';
+    const rC   = rV   === null ? '#555' : rV   >= 0 ? '#00ff88' : '#ff4444';
+    volOrPnl = pillHtml('PNL', pnlV !== null ? `${pnlV >= 0 ? '+' : ''}$${Math.abs(pnlV).toFixed(0)}` : '—', pnlC) +
+               pillHtml('R',   rV   !== null ? `${rV   >= 0 ? '+' : ''}${fmt(rV, 2)}` : '—', rC);
+  } else {
+    const vr = p.vol_ratio ?? null;
+    const vrC = vr !== null && vr >= 1.5 ? '#ffaa00' : '#555555';
+    volOrPnl = pillHtml('VOL', vr !== null ? `${fmt(vr, 1)}x` : '—', vrC);
+  }
+
+  const row2 = `<div class="card-row2">` +
+    pillHtml('ADX', fmt(adx, 1), adxColor) +
+    pillHtml('1H',  j1h  !== null ? fmt(j1h,  1) : '—', j1hC) +
+    pillHtml('15M', j15m !== null ? fmt(j15m, 1) : '—', j15mC) +
+    pillHtml('5M',  j5m  !== null ? fmt(j5m,  1) : '—', j5mC) +
+    fundPill + volOrPnl +
+    `</div>`;
+
+  // ── ROW 3: MA stack + RSI ─────────────────────────────────────────────────
+  const mad = ((p.ma_data || {}).timeframes) || {};
+  const STACKS = {
+    BULL: { label: 'BULL', color: '#00ff88' }, BEAR: { label: 'BEAR', color: '#ff4444' },
+    MIXED: { label: 'MIX', color: '#ffaa00' }, NEUTRAL: { label: 'NEU', color: '#66aaff' },
+  };
+  const sPill = (lbl, key) => {
+    const si = STACKS[(mad[key] || {}).stack] || STACKS.NEUTRAL;
+    return `<div class="card-pill" style="border-color:${si.color}22">` +
+      `<span class="card-pill-label">${lbl}</span>` +
+      `<span class="card-pill-val" style="color:${si.color}">${si.label}</span></div>`;
+  };
+  const rsi = p.rsi_1h ?? null;
+  const rsiC = rsi === null ? '#555' : rsi < 35 ? '#00ff88' : rsi > 65 ? '#ff4444' : '#ffffff';
+  const rsiPill = `<div class="card-pill" style="margin-left:auto">` +
+    `<span class="card-pill-label">RSI</span>` +
+    `<span class="card-pill-val" style="color:${rsiC}">${rsi !== null ? fmt(rsi, 1) : '—'}</span></div>`;
+
+  const row3 = `<div class="card-row3">` +
+    `<span class="card-pill-label" style="flex-shrink:0">MA</span>` +
+    sPill('5M', '5m') + sPill('15M', '15m') + sPill('1H', '1h') + rsiPill +
+    `</div>`;
+
+  // ── ROW 4: Depth ──────────────────────────────────────────────────────────
+  const bid = p.bid_pct ?? 50;
+  const ask = p.ask_pct ?? 50;
+  const bidW = p.bid_wall != null ? fmtPrice(p.bid_wall) : '—';
+  const askW = p.ask_wall != null ? fmtPrice(p.ask_wall) : '—';
+  const row4 = `<div class="card-row4">` +
+    `<div class="card-depth-bar"><div class="card-depth-bar-fill" style="width:${Math.round(bid)}%"></div></div>` +
+    `<div class="card-depth-cols">` +
+    `<div><div class="card-pill-label">BUYERS</div><div style="font-size:10px;font-weight:700;color:#00ff88">${fmt(bid,1)}%</div><div style="font-size:9px;font-weight:700;color:#ffffff;font-family:'JetBrains Mono',monospace">${bidW}</div></div>` +
+    `<div style="text-align:right"><div class="card-pill-label">SELLERS</div><div style="font-size:10px;font-weight:700;color:#ff4444">${fmt(ask,1)}%</div><div style="font-size:9px;font-weight:700;color:#ffffff;font-family:'JetBrains Mono',monospace">${askW}</div></div>` +
+    `</div></div>`;
+
+  // ── Signal badge ───────────────────────────────────────────────────────────
+  let badge = '';
+  if (sst === 'PENDING') {
+    const dir = p.signal_direction || '';
+    badge = `<div class="card-signal-badge" style="background:rgba(255,170,0,0.08);border-top:1px solid rgba(255,170,0,0.3);color:#ffaa00">⏳ CONFIRMING ${dir}</div>`;
+  } else if (sst === 'ALERT') {
+    const dir = p.signal_direction || '';
+    badge = `<div class="card-signal-badge" style="background:rgba(0,255,136,0.08);border-top:1px solid rgba(0,255,136,0.3);color:#00ff88">🔔 CONFIRMED ${dir}</div>`;
+  } else if (sst === 'IN_TRADE' && trade) {
+    const dir   = ot[`${p.symbol}LONG`] ? 'LONG' : 'SHORT';
+    const dirC  = dir === 'LONG' ? '#00ff88' : '#ff4444';
+    const dur   = elapsed(trade.opened_at);
+    badge = `<div class="card-signal-badge" style="background:rgba(0,255,136,0.06);border-top:1px solid rgba(0,255,136,0.25);color:${dirC}"><span class="sig-pulse">●</span> ${dir} · ${dur}</div>`;
+  }
+
+  return `<div class="${cc}" data-symbol="${p.symbol}">${row1}${row2}${row3}${row4}${badge}</div>`;
+}
+
+function renderCardGrid() {
+  if (!state) return;
+  const grid = document.getElementById('card-grid');
+  if (!grid || grid.style.display === 'none') return;
+
+  let pairs = state.pair_states || [];
+  const ot  = state.open_trades || {};
+
+  switch (activeFilter) {
+    case 'bear':   pairs = pairs.filter(p => p.trend === 'Strong Bear'); break;
+    case 'bull':   pairs = pairs.filter(p => p.trend === 'Strong Bull'); break;
+    case 'alerts': pairs = pairs.filter(p => p.signal_state === 'PENDING' || p.signal_state === 'ALERT'); break;
+    case 'trades': pairs = pairs.filter(p => p.signal_state === 'IN_TRADE'); break;
+    case 'hp':     pairs = pairs.filter(p => p.trend_strength === 'HIGH_PROB'); break;
+    case 'strong': pairs = pairs.filter(p => p.trend_strength === 'STRONG'); break;
+  }
+
+  const countEl = document.getElementById('filter-count');
+  if (countEl) countEl.textContent = pairs.length;
+
+  grid.innerHTML = pairs.length
+    ? pairs.map(p => buildPairCard(p)).join('')
+    : `<div style="grid-column:1/-1;text-align:center;color:#444;padding:40px;font-size:11px">No pairs match this filter</div>`;
+}
+
 function renderAll() {
   renderHeader();
   renderScanPulse();
-  renderPairTable();
-  if (activeMASymbol) renderMAOverlay(activeMASymbol);
-  else renderSidePanel();
+  if (viewMode === 'cards') {
+    renderCardGrid();
+  } else {
+    renderPairTable();
+    if (activeMASymbol) renderMAOverlay(activeMASymbol);
+    else renderSidePanel();
+  }
   renderAlerts();
   renderTradeLog();
   updateAlertBadge();
@@ -1567,3 +1784,4 @@ try {
 // Initial load + 1s refresh
 poll();
 setInterval(poll, 1000);
+initViewMode();
