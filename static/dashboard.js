@@ -254,7 +254,7 @@ function renderHeader() {
       `<span style="color:#333"> · </span>` +
       `<span style="color:#00ff88">${bullCount} BULL</span>` +
       `<span style="color:#333"> · </span>` +
-      `<span style="color:#888">${neutCount} NEU</span>`;
+      `<span style="color:#66aaff">${neutCount} NEU</span>`;
   }
 
   const pairs = state.pair_states || [];
@@ -395,59 +395,86 @@ function renderScanPulse() {
   lastScanCount = scanCount;
 }
 
-// ── Trend dot strength builder ─────────────────────────────────────────────────
+// ── Trend pill builder (V4 — color-aware, ADX-tiered) ─────────────────────────
 
-function buildTrendDots(trend, adx) {
-  const isBull    = trend === 'Strong Bull';
-  const isBear    = trend === 'Strong Bear';
-  const isNeutral = !isBull && !isBear;
+function buildTrendPill(tp) {
+  // tp: HIGH_PROB_BEAR, STRONG_BEAR, REGULAR_BEAR,
+  //     HIGH_PROB_BULL, STRONG_BULL, REGULAR_BULL, NEUTRAL
+  if (!tp) tp = 'NEUTRAL';
 
-  const litColor   = isBull ? '#00ff88' : isBear ? '#ff4444' : '#222222';
-  const litGlow    = isBull ? 'rgba(0,255,136,0.7)' : isBear ? 'rgba(255,68,68,0.7)' : 'none';
-  const dimBg      = isBull ? 'rgba(0,255,136,0.12)' : isBear ? 'rgba(255,68,68,0.12)' : '#222222';
-  const dimBorder  = isBull ? '1px solid rgba(0,255,136,0.2)' : isBear ? '1px solid rgba(255,68,68,0.2)' : '1px solid #333';
-  const labelColor = isBull ? '#00ff88' : isBear ? '#ff4444' : '#444444';
-  const label      = isBull ? 'BULL' : isBear ? 'BEAR' : 'NEU';
+  const isBull    = tp.endsWith('_BULL');
+  const isBear    = tp.endsWith('_BEAR');
+  const isHigh    = tp.startsWith('HIGH_PROB');
+  const isStrong  = tp.startsWith('STRONG');
+  const isRegular = tp.startsWith('REGULAR');
+  const isNeutral = tp === 'NEUTRAL';
 
+  let pillBg, pillBorder, labelColor, label;
+  let litColor, litGlow, dimBg, dimBorder, glowPx;
   let litCount = 0;
-  if (!isNeutral) {
-    if (adx >= 60) litCount = 3;
-    else if (adx >= 40) litCount = 2;
-    else if (adx >= 25) litCount = 1;
+
+  if (isNeutral) {
+    pillBg     = 'rgba(100,160,255,0.08)';  pillBorder = 'rgba(100,160,255,0.2)';
+    labelColor = '#66aaff';                 label      = 'NEU';
+    litColor   = 'rgba(100,160,255,0.35)';  litGlow    = 'none'; glowPx = 0;
+    dimBg      = 'rgba(100,160,255,0.35)';  dimBorder  = '1px solid rgba(100,160,255,0.3)';
+  } else if (isHigh) {
+    litCount = 3; glowPx = 5;
+    if (isBear) {
+      pillBg = 'rgba(255,68,68,0.1)';   pillBorder = 'rgba(255,68,68,0.3)';
+      labelColor = '#ff4444';           label      = 'BEAR';
+      litColor   = '#ff4444';           litGlow    = 'rgba(255,68,68,0.8)';
+      dimBg      = 'rgba(255,68,68,0.12)'; dimBorder = '1px solid rgba(255,68,68,0.2)';
+    } else {
+      pillBg = 'rgba(0,255,136,0.1)';   pillBorder = 'rgba(0,255,136,0.3)';
+      labelColor = '#00ff88';           label      = 'BULL';
+      litColor   = '#00ff88';           litGlow    = 'rgba(0,255,136,0.8)';
+      dimBg      = 'rgba(0,255,136,0.12)'; dimBorder = '1px solid rgba(0,255,136,0.2)';
+    }
+  } else if (isStrong) {
+    litCount = 2; glowPx = 4;
+    pillBg     = 'rgba(255,170,0,0.08)'; pillBorder = 'rgba(255,170,0,0.22)';
+    labelColor = '#ffaa00';              label      = isBear ? 'BEAR' : 'BULL';
+    litColor   = '#ffaa00';             litGlow    = 'rgba(255,170,0,0.7)';
+    dimBg      = 'rgba(255,170,0,0.12)'; dimBorder = '1px solid rgba(255,170,0,0.2)';
+  } else {
+    litCount = 1; glowPx = 3;
+    pillBg     = 'rgba(255,255,255,0.05)'; pillBorder = 'rgba(255,255,255,0.12)';
+    labelColor = '#ffffff';                label      = isBear ? 'BEAR' : 'BULL';
+    litColor   = '#ffffff';               litGlow    = 'rgba(255,255,255,0.4)';
+    dimBg      = 'rgba(255,255,255,0.08)'; dimBorder = '1px solid rgba(255,255,255,0.12)';
   }
 
   function dot(i) {
-    const lit = i < litCount;
-    if (lit) {
-      return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${litColor};box-shadow:0 0 5px ${litGlow};flex-shrink:0"></span>`;
-    }
     if (isNeutral) {
-      return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#222;border:1px solid #333;flex-shrink:0"></span>`;
+      return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${dimBg};border:1px solid rgba(100,160,255,0.3);flex-shrink:0"></span>`;
+    }
+    if (i < litCount) {
+      return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${litColor};box-shadow:0 0 ${glowPx}px ${litGlow};flex-shrink:0"></span>`;
     }
     return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${dimBg};border:${dimBorder};flex-shrink:0"></span>`;
   }
 
-  return `<div style="display:flex;align-items:center;gap:3px">` +
+  return `<div style="display:inline-flex;align-items:center;gap:3px;background:${pillBg};border:1px solid ${pillBorder};border-radius:20px;padding:4px 10px">` +
     dot(0) + dot(1) + dot(2) +
-    `<span style="color:${labelColor};font-weight:700;font-size:10px;margin-left:5px;letter-spacing:0.04em">${label}</span>` +
+    `<span style="color:${labelColor};font-weight:700;font-size:11px;margin-left:5px;letter-spacing:0.04em">${label}</span>` +
     `</div>`;
 }
 
-// ── Pair table render (two-row layout) ────────────────────────────────────────
+// ── Pair table render (single-row layout V4) ──────────────────────────────────
 
 function buildPairRowHtml(p) {
-  const livePrice  = (state.prices && state.prices[p.symbol]) || p.price;
-  const adx        = p.adx     ?? 0;
-  const j5         = p.j5      ?? 50;
-  const bid        = p.bid_pct ?? 0;
-  const ask        = p.ask_pct ?? 0;
-  const bidWall    = p.bid_wall ?? null;
-  const askWall    = p.ask_wall ?? null;
-  const change24h  = p.change_24h ?? null;
+  const livePrice = (state.prices && state.prices[p.symbol]) || p.price;
+  const adx       = p.adx     ?? 0;
+  const bid       = p.bid_pct ?? 0;
+  const ask       = p.ask_pct ?? 0;
+  const bidWall   = p.bid_wall ?? null;
+  const askWall   = p.ask_wall ?? null;
+  const change24h = p.change_24h ?? null;
 
-  const isStale   = p.data_stale === true;
-  const symHtml   = `<span class="sym" style="${isStale ? 'color:#555' : ''}">${p.symbol}${isStale ? '<span style="font-size:7px;color:#444;margin-left:2px">~</span>' : ''}</span>`;
-  const trendDots = buildTrendDots(p.trend || 'Neutral', adx);
+  const isStale  = p.data_stale === true;
+  const symHtml  = `<span class="sym" style="${isStale ? 'color:#555' : ''}">${p.symbol}${isStale ? '<span style="font-size:7px;color:#444;margin-left:2px">~</span>' : ''}</span>`;
+  const trendPill = buildTrendPill(p.trend_pill || 'NEUTRAL');
 
   // Price column: stacked price + 24H change
   let ch24Line;
@@ -460,23 +487,22 @@ function buildPairRowHtml(p) {
   }
   const priceHtml = `<span style="display:block;font-size:14px;font-weight:700;color:#fff;font-family:'JetBrains Mono',monospace">${fmtPrice(livePrice)}</span>${ch24Line}`;
 
-  // Walls column: stacked bid + ask pills
-  let wallsHtml;
-  if (bidWall === null && askWall === null) {
-    wallsHtml = `<span style="color:#555">—</span>`;
-  } else {
-    const bPill = bidWall !== null
-      ? `<div style="background:rgba(0,255,136,0.08);border:1px solid rgba(0,255,136,0.2);border-radius:10px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px;margin-bottom:2px">` +
-        `<span style="font-size:8px;color:#555">B</span>` +
-        `<span style="font-size:10px;font-weight:700;color:#00ff88;font-family:'JetBrains Mono',monospace">${fmtPrice(bidWall)}</span></div>`
-      : '';
-    const aPill = askWall !== null
-      ? `<div style="background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.2);border-radius:10px;padding:2px 7px;display:inline-flex;align-items:center;gap:4px">` +
-        `<span style="font-size:8px;color:#555">A</span>` +
-        `<span style="font-size:10px;font-weight:700;color:#ff4444;font-family:'JetBrains Mono',monospace">${fmtPrice(askWall)}</span></div>`
-      : '';
-    wallsHtml = `<div style="display:flex;flex-direction:column;align-items:center">${bPill}${aPill}</div>`;
-  }
+  // BUYERS · SELLERS combined pill column
+  const buyWallStr  = bidWall !== null ? fmtPrice(bidWall) : '—';
+  const sellWallStr = askWall !== null ? fmtPrice(askWall) : '—';
+  const buyPill  = `<div style="background:rgba(0,255,136,0.07);border:1px solid rgba(0,255,136,0.18);border-radius:10px;padding:3px 8px;display:flex;align-items:center;gap:4px;margin-bottom:2px">` +
+    `<span style="font-size:8px;color:#00ff88;font-weight:700;opacity:0.6">BUY</span>` +
+    `<span style="font-size:10px;color:#00ff88;font-weight:700">${fmt(bid, 1)}%</span>` +
+    `<span style="font-size:9px;color:#333">\u00b7</span>` +
+    `<span style="font-size:10px;color:#ffffff;font-weight:700;font-family:'JetBrains Mono',monospace">${buyWallStr}</span>` +
+    `</div>`;
+  const sellPill = `<div style="background:rgba(255,68,68,0.07);border:1px solid rgba(255,68,68,0.18);border-radius:10px;padding:3px 8px;display:flex;align-items:center;gap:4px">` +
+    `<span style="font-size:8px;color:#ff4444;font-weight:700;opacity:0.6">SELL</span>` +
+    `<span style="font-size:10px;color:#ff4444;font-weight:700">${fmt(ask, 1)}%</span>` +
+    `<span style="font-size:9px;color:#333">\u00b7</span>` +
+    `<span style="font-size:10px;color:#ffffff;font-weight:700;font-family:'JetBrains Mono',monospace">${sellWallStr}</span>` +
+    `</div>`;
+  const depthPillHtml = `<div style="display:flex;flex-direction:column">${buyPill}${sellPill}</div>`;
 
   const adxColor = adx >= 30 ? '#00ff88' : '#666666';
 
@@ -525,32 +551,15 @@ function buildPairRowHtml(p) {
     `<span class="gate-dot" style="background:${gColor(gs.ma_pass)}"></span>` +
     `</div>`;
 
-  const bidWallStr = bidWall !== null ? fmtPrice(bidWall) : '—';
-  const askWallStr = askWall !== null ? fmtPrice(askWall) : '—';
-
-  const row1 = `<tr data-symbol="${p.symbol}" class="pair-row-1">` +
+  return `<tr data-symbol="${p.symbol}" class="pair-row-1">` +
     `<td style="text-align:left">${symHtml}</td>` +
-    `<td style="text-align:left">${trendDots}</td>` +
+    `<td style="text-align:left">${trendPill}</td>` +
     `<td class="price-cell" style="text-align:right">${priceHtml}</td>` +
-    `<td style="text-align:center">${wallsHtml}</td>` +
+    `<td>${depthPillHtml}</td>` +
     `<td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>` +
     `<td style="text-align:center">${gatesCell}</td>` +
     `<td style="text-align:center">${sigCell}</td>` +
     `</tr>`;
-
-  const row2 = `<tr data-symbol="${p.symbol}" class="pair-row-2">` +
-    `<td colspan="7" style="padding:0">` +
-    `<div class="depth-strip">` +
-    `<div class="depth-buyers">` +
-    `<span class="ds-label ds-label-buy">BUYERS</span>` +
-    `<span class="ds-pct ds-pct-buy">${fmt(bid, 1)}%</span>` +
-    `</div><div class="ds-divider"></div>` +
-    `<div class="depth-sellers">` +
-    `<span class="ds-label ds-label-sell">SELLERS</span>` +
-    `<span class="ds-pct ds-pct-sell">${fmt(ask, 1)}%</span>` +
-    `</div></div></td></tr>`;
-
-  return row1 + row2;
 }
 
 function renderPairTable() {
@@ -607,7 +616,8 @@ function renderSidePanel() {
       html += `<div class="sp-chips">${chips(bulls, '#00ff88')}</div>`;
     }
     if (neuts.length > 0) {
-      html += `<div class="sp-chips">${chips(neuts, '#444444')}</div>`;
+      html += `<div class="sp-row"><span class="sp-row-label" style="color:#66aaff">NEU ${neuts.length}</span></div>`;
+      html += `<div class="sp-chips">${chips(neuts, '#66aaff')}</div>`;
     }
     trendEl.innerHTML = html || '<span style="color:#333;font-size:9px">—</span>';
   }
