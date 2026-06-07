@@ -34,9 +34,10 @@ from config import (
     MARGIN_HARD_CAP_USDC, MARGIN_PER_TRADE, MAX_SIMULTANEOUS_TRADES,
     DEFAULT_LEVERAGE, PAPER_MODE,
     CONSECUTIVE_LOSS_STOP, TRAILING_TP_PCT, SL_PCT,
-    DAILY_LOSS_LIMIT,
+    DAILY_LOSS_LIMIT, STALE_ALERT_SECONDS,
 )
 from hl_client import HLClient
+from mexc_client import MexcClient
 from scanner import (
     run_full_scan, get_pending, set_close_cooldown, reset_scan_counter,
     get_cooldown_remaining, get_pair_signal_info, clear_all_scanner_state,
@@ -259,7 +260,8 @@ class AppState:
 
 
 app_state = AppState()
-hl_client: Optional[HLClient] = None
+hl_client:   Optional[HLClient]   = None
+mexc_client: Optional[MexcClient] = None
 
 
 # ── Alert retirement ──────────────────────────────────────────────────────────
@@ -343,6 +345,7 @@ async def _do_open_trade(
     symbol: str, direction: str,
     margin_usdc: float, leverage: int,
     alert_data: Optional[dict] = None,
+    exchange: str = "HL",
 ) -> tuple[Optional[dict], Optional[str]]:
     if app_state.margin_deployed + margin_usdc > MARGIN_HARD_CAP_USDC:
         return None, "cap_reached"
@@ -350,7 +353,8 @@ async def _do_open_trade(
     if key in app_state.open_trades:
         return None, "already_open"
 
-    result = await hl_client.open_position(symbol, direction, margin_usdc, leverage)
+    _client = mexc_client if exchange == "MEXC" else hl_client
+    result  = await _client.open_position(symbol, direction, margin_usdc, leverage)
     if result.get("status") != "ok":
         return None, result.get("msg", "open_failed")
 
@@ -390,6 +394,7 @@ async def _do_open_trade(
         "tp1_hit":          False,
         "extreme_price":    None,
         "entry_type":       entry_type,
+        "exchange":         exchange,
     }
 
     app_state.open_trades[key] = trade
@@ -577,8 +582,7 @@ async def scan_loop():
         try:
             pair_states, new_alerts = await run_full_scan(hl_client)
 
-            # pair_states is None when session filter blocked the scan
-            if pair_states is not None:
+            if pair_states:
                 app_state.pair_states = pair_states
 
                 for ps in pair_states:
@@ -707,13 +711,14 @@ async def price_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global hl_client
-    hl_client = HLClient()
-    print("[startup] HLClient initialized")
+    global hl_client, mexc_client
+    hl_client   = HLClient()
+    mexc_client = MexcClient()
+    print("[startup] HLClient + MexcClient initialized")
     print(
-        "[CONFIG] MARGIN=2000 | MAX_TRADES=2 | SL=3% | TRAILING=0.25% | COOLDOWN=60min "
-        "| CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=10x/15x/25x "
-        "| SESSION=EU+US | BTC_REGIME=on | PAPER=" + str(PAPER_MODE)
+        "[CONFIG] SL=3%_FIXED | SL_HALF=0.6% | TP=1.5R/2.5R/4.0R(HIGH)/2.5R(STRONG)/1.5R(REG) "
+        "| COOLDOWN=60min | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=10x/15x/25x "
+        "| SESSION=display_only | MEXC=enabled | HL=enabled | PAPER=" + str(PAPER_MODE)
     )
 
     scan_task  = asyncio.create_task(scan_loop())
@@ -723,6 +728,7 @@ async def lifespan(app: FastAPI):
 
     scan_task.cancel()
     price_task.cancel()
+    await mexc_client.close()
     await hl_client.close()
 
 
@@ -777,6 +783,7 @@ class OpenTradeRequest(BaseModel):
     margin_usdc: float = MARGIN_PER_TRADE
     leverage: int = DEFAULT_LEVERAGE
     alert_id: Optional[str] = None
+    exchange: str = "HL"   # "HL" or "MEXC"
 
 
 @app.post("/api/trade/open")
@@ -798,7 +805,7 @@ async def open_trade(req: OpenTradeRequest):
         None,
     )
     trade, err = await _do_open_trade(
-        req.symbol, req.direction, req.margin_usdc, req.leverage, alert
+        req.symbol, req.direction, req.margin_usdc, req.leverage, alert, req.exchange
     )
     if not trade:
         if err == "cap_reached":
@@ -826,7 +833,9 @@ async def close_trade(req: CloseTradeRequest):
     if not trade:
         raise HTTPException(status_code=404, detail=f"No open trade for {key}")
 
-    result = await hl_client.close_position(req.symbol, req.direction, trade["size"])
+    _exc    = trade.get("exchange", "HL")
+    _client = mexc_client if _exc == "MEXC" else hl_client
+    result  = await _client.close_position(req.symbol, req.direction, trade["size"])
     if result.get("status") != "ok":
         raise HTTPException(status_code=500, detail=result.get("msg", "Failed to close trade"))
 
@@ -943,6 +952,21 @@ async def clear_tradelog():
 
     print(f"[CLEAR] log cleared, state reset, {open_count} trades force closed")
     return {"status": "ok", "trades_force_closed": open_count}
+
+
+@app.delete("/api/alerts/stale")
+async def clear_stale_alerts():
+    now = time.time()
+    open_keys = {(t["symbol"], t["direction"]) for t in app_state.open_trades.values()}
+    before = len(app_state.alerts)
+    app_state.alerts = [
+        a for a in app_state.alerts
+        if (a["symbol"], a["direction"]) in open_keys
+        or (now - a.get("fired_at", 0)) < STALE_ALERT_SECONDS
+    ]
+    removed = before - len(app_state.alerts)
+    print(f"[STALE] cleared {removed} stale alerts (threshold={STALE_ALERT_SECONDS}s)")
+    return {"status": "ok", "removed": removed}
 
 
 @app.get("/api/tradelog/csv")
