@@ -1402,6 +1402,13 @@ async function clearTradeLog() {
   }
 }
 
+// ── Reference pill toggle ─────────────────────────────────────────────────────
+
+function toggleRefPill() {
+  const card = document.getElementById('ref-pill-card');
+  if (card) card.classList.toggle('open');
+}
+
 // ── Poll loop ─────────────────────────────────────────────────────────────────
 
 async function poll() {
