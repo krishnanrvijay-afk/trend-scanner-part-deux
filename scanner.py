@@ -13,7 +13,6 @@ from config import (
     COOLDOWN_SECONDS, CONSECUTIVE_LOSS_STOP,
     MARGIN_PER_TRADE,
     PAPER_MODE,
-    SESSION_WINDOWS,
     BTC_REGIME_FILTER_ENABLED,
 )
 from hl_client import HLClient
@@ -21,11 +20,13 @@ from hl_client import HLClient
 logger = logging.getLogger("scanner")
 
 # ── Module-level state ────────────────────────────────────────────────────────
-_last_result:  dict[str, bool]  = {}   # key → last scan result (True/False)
-_pending:      dict[str, dict]  = {}   # PENDING (first scan passed)
-_confirmed_at: dict[str, float] = {}   # key → timestamp of ALERT confirmation
-_cooldowns:    dict[str, float] = {}   # key → expiry timestamp
-_btc_regime:   str              = "Neutral"  # updated each BTC scan
+_last_result:     dict[str, bool]  = {}   # key → last scan result (True/False)
+_pending:         dict[str, dict]  = {}   # PENDING (first scan passed)
+_confirmed_at:    dict[str, float] = {}   # key → timestamp of ALERT confirmation
+_cooldowns:       dict[str, float] = {}   # key → expiry timestamp
+_btc_regime:      str              = "Neutral"  # updated each BTC scan
+_last_known_good: dict[str, dict]  = {}   # symbol → last successful scan result
+_candle_cache:    dict[str, dict]  = {}   # "{symbol}_1h" → {candles, hour, last_ts}
 
 CONFIRMED_SHOW_SECONDS = 30  # show ALERT state in signal column for this long
 
@@ -33,49 +34,12 @@ _overrides_str = " ".join(f"{k}:{v}" for k, v in PAIR_ADX_OVERRIDES.items()) or 
 logger.info(
     "[CONFIG] MARGIN=%d | SL=3%%(FIXED) | SL_HALF=0.6%% | TP=1.5R/2.5R/4.0R(HIGH)/2.5R(STRONG)/1.5R(REG)"
     " | COOLDOWN=60min | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=%dx/%dx/%dx"
-    " | SESSION=display_only | BTC_REGIME=on | MEXC=enabled | HL=enabled"
-    " | ADX_OVERRIDES=%s | PAPER=%s",
+    " | WALLS=enabled | CANDLE_CACHE=1h | RATE_LIMIT=stagger_0.3s_backoff_2s"
+    " | EXCHANGE=HL+MEXC | BTC_REGIME=on | ADX_OVERRIDES=%s | PAPER=%s",
     MARGIN_PER_TRADE,
     LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
     _overrides_str, PAPER_MODE,
 )
-
-
-# ── Session filter ─────────────────────────────────────────────────────────────
-
-def is_trading_session() -> bool:
-    """Return True if current UTC time falls within any configured SESSION_WINDOWS."""
-    now_utc = datetime.now(timezone.utc)
-    now_hm  = (now_utc.hour, now_utc.minute)
-    for start_str, end_str in SESSION_WINDOWS:
-        sh, sm = int(start_str[:2]), int(start_str[3:])
-        eh, em = int(end_str[:2]),   int(end_str[3:])
-        if (sh, sm) <= now_hm < (eh, em):
-            return True
-    return False
-
-
-def get_session_label() -> str:
-    """Return a display label for the current session state."""
-    now_utc = datetime.now(timezone.utc)
-    now_hm  = (now_utc.hour, now_utc.minute)
-    in_eu   = False
-    in_us   = False
-    for i, (start_str, end_str) in enumerate(SESSION_WINDOWS):
-        sh, sm = int(start_str[:2]), int(start_str[3:])
-        eh, em = int(end_str[:2]),   int(end_str[3:])
-        inside = (sh, sm) <= now_hm < (eh, em)
-        if i == 0:
-            in_eu = inside
-        elif i == 1:
-            in_us = inside
-    if in_eu and in_us:
-        return "EU+US"
-    elif in_eu:
-        return "EU SESSION"
-    elif in_us:
-        return "US SESSION"
-    return "CLOSED"
 
 
 # ── BTC regime ────────────────────────────────────────────────────────────────
@@ -484,22 +448,60 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     global _btc_regime
 
     try:
-        candles_1h_raw, orderbook, price, change_24h = await asyncio.gather(
-            client.get_candles(symbol, "1h", 80),
-            client.get_orderbook(symbol, 20),
-            client.get_price(symbol),
-            client.get_24h_change(symbol),
-        )
+        # 1h candle cache — skip network fetch if candle hour unchanged
+        cache_key = f"{symbol}_1h"
+        cached_1h = _candle_cache.get(cache_key)
+        now_hour  = int(time.time()) // 3600
+
+        if cached_1h and cached_1h.get("hour") == now_hour:
+            logger.info("[CACHE] %s 1h candles unchanged using cached data", symbol)
+            candles_1h_raw = cached_1h["candles"]
+            orderbook, price, change_24h = await asyncio.gather(
+                client.get_orderbook(symbol, 20),
+                client.get_price(symbol),
+                client.get_24h_change(symbol),
+            )
+        else:
+            candles_1h_raw, orderbook, price, change_24h = await asyncio.gather(
+                client.get_candles(symbol, "1h", 80),
+                client.get_orderbook(symbol, 20),
+                client.get_price(symbol),
+                client.get_24h_change(symbol),
+            )
+            if candles_1h_raw:
+                _candle_cache[cache_key] = {
+                    "candles": candles_1h_raw,
+                    "hour":    now_hour,
+                    "last_ts": candles_1h_raw[-1]["time"],
+                }
     except Exception as e:
         print(f"[scanner] Data fetch error for {symbol}: {e}")
-        return {"symbol": symbol, "error": str(e)}
+        lkg = _last_known_good.get(symbol)
+        if lkg:
+            logger.info("[STALE DATA] %s using last known good from previous scan", symbol)
+            stale = dict(lkg)
+            stale["data_stale"] = True
+            return stale
+        return {"symbol": symbol, "error": str(e), "data_stale": True}
 
     if not candles_1h_raw or price is None:
-        return {"symbol": symbol, "error": "Insufficient data"}
+        lkg = _last_known_good.get(symbol)
+        if lkg:
+            logger.info("[STALE DATA] %s null price/candles using last known good", symbol)
+            stale = dict(lkg)
+            stale["data_stale"] = True
+            return stale
+        return {"symbol": symbol, "error": "Insufficient data", "data_stale": True}
 
     df_1h = pd.DataFrame(candles_1h_raw)
     if len(df_1h) < 61:
-        return {"symbol": symbol, "error": "Insufficient candles"}
+        lkg = _last_known_good.get(symbol)
+        if lkg:
+            logger.info("[STALE DATA] %s insufficient candles using last known good", symbol)
+            stale = dict(lkg)
+            stale["data_stale"] = True
+            return stale
+        return {"symbol": symbol, "error": "Insufficient candles", "data_stale": True}
 
     ma10, ma30, ma60   = get_ma_values(df_1h)
     adx_1h             = compute_adx(df_1h, 14)
@@ -622,7 +624,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
 
     walls = compute_walls(orderbook, price, symbol)
 
-    return {
+    result = {
         "symbol":         symbol,
         "price":          price,
         "trend":          trend,
@@ -645,16 +647,16 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         ),
         "scanned_at":     int(time.time()),
     }
+    _last_known_good[symbol] = result
+    return result
 
 
 async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
-    """Returns (pair_states, new_alerts). Scans all pairs unconditionally.
-    SESSION_FILTER_ENABLED is display-only and never blocks scanning.
-    """
+    """Returns (pair_states, new_alerts). Scans all pairs unconditionally."""
     results = []
     for i, sym in enumerate(PAIRS):
         if i > 0:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
         try:
             result = await scan_pair(sym, client)
         except Exception as e:
