@@ -921,6 +921,11 @@ async def research(request: Request):
     return templates.TemplateResponse(request, "pair_research_dashboard.html", {})
 
 
+@app.get("/bounce", response_class=HTMLResponse)
+async def bounce(request: Request):
+    return templates.TemplateResponse(request, "bounce_research_dashboard.html", {})
+
+
 @app.get("/api/state")
 async def get_state():
     return app_state.serialise()
