@@ -8,12 +8,12 @@ import pandas as pd
 
 from config import (
     PAIRS, TC_ADX_MIN, DEPTH_GATE_PCT, PAIR_ADX_OVERRIDES,
-    SL_PCT, TP1_R_MULTIPLIER, TP2_R_MULTIPLIER,
+    SL_PCT, SL_HALF_PCT, TP1_MULTIPLIER, TP2_MULTIPLIER, TP3_MULTIPLIER,
     LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
     COOLDOWN_SECONDS, CONSECUTIVE_LOSS_STOP,
     MARGIN_PER_TRADE,
     PAPER_MODE,
-    SESSION_FILTER_ENABLED, SESSION_WINDOWS,
+    SESSION_WINDOWS,
     BTC_REGIME_FILTER_ENABLED,
 )
 from hl_client import HLClient
@@ -31,10 +31,10 @@ CONFIRMED_SHOW_SECONDS = 30  # show ALERT state in signal column for this long
 
 _overrides_str = " ".join(f"{k}:{v}" for k, v in PAIR_ADX_OVERRIDES.items()) or "none"
 logger.info(
-    "[CONFIG] MARGIN=%d | MAX_TRADES=2 | SL=3%% | TRAILING=0.25%% | COOLDOWN=60min"
-    " | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=%dx/%dx/%dx"
-    " | SESSION=EU+US | BTC_REGIME=on"
-    " | CONDITIONS=4 NO_SCORING | ADX_OVERRIDES=%s | PAPER=%s",
+    "[CONFIG] MARGIN=%d | SL=3%%(FIXED) | SL_HALF=0.6%% | TP=1.5R/2.5R/4.0R(HIGH)/2.5R(STRONG)/1.5R(REG)"
+    " | COOLDOWN=60min | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=%dx/%dx/%dx"
+    " | SESSION=display_only | BTC_REGIME=on | MEXC=enabled | HL=enabled"
+    " | ADX_OVERRIDES=%s | PAPER=%s",
     MARGIN_PER_TRADE,
     LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
     _overrides_str, PAPER_MODE,
@@ -426,31 +426,40 @@ def compute_gates_status(
 
 # ── Fixed SL / TP ─────────────────────────────────────────────────────────────
 
-def calc_sl_tp(entry_price: float, direction: str, symbol: str = "?") -> dict:
-    sl_dist = entry_price * SL_PCT
+def calc_sl_tp(entry_price: float, direction: str, trend_strength: str = "REGULAR", symbol: str = "?") -> dict:
+    sl_dist  = entry_price * SL_PCT
+    sl_half  = entry_price * SL_HALF_PCT
     if direction == "LONG":
-        sl_price  = entry_price - sl_dist
-        tp1_price = entry_price + sl_dist * TP1_R_MULTIPLIER
-        tp2_price = entry_price + sl_dist * TP2_R_MULTIPLIER
+        sl_price      = entry_price - sl_dist
+        sl_half_price = entry_price - sl_half
+        tp1_price     = entry_price + sl_dist * TP1_MULTIPLIER
+        tp2_price     = entry_price + sl_dist * TP2_MULTIPLIER
+        tp3_price     = entry_price + sl_dist * TP3_MULTIPLIER
     else:
-        sl_price  = entry_price + sl_dist
-        tp1_price = entry_price - sl_dist * TP1_R_MULTIPLIER
-        tp2_price = entry_price - sl_dist * TP2_R_MULTIPLIER
-    sl_pct_val  = SL_PCT * 100
-    tp1_pct_val = SL_PCT * TP1_R_MULTIPLIER * 100
-    tp2_pct_val = SL_PCT * TP2_R_MULTIPLIER * 100
+        sl_price      = entry_price + sl_dist
+        sl_half_price = entry_price + sl_half
+        tp1_price     = entry_price - sl_dist * TP1_MULTIPLIER
+        tp2_price     = entry_price - sl_dist * TP2_MULTIPLIER
+        tp3_price     = entry_price - sl_dist * TP3_MULTIPLIER
+    sl_pct_val = SL_PCT * 100
+    tp_info = "TP1+TP2+TP3" if trend_strength == "HIGH_PROB" else ("TP1+TP2" if trend_strength == "STRONG" else "TP1")
     logger.info(
-        "[LEVELS] %s %s entry=%.4f sl=%.4f (%.1f%%) tp1=%.4f (%.1f%%) tp2=%.4f (%.1f%%)",
-        symbol, direction, entry_price,
-        sl_price, sl_pct_val, tp1_price, tp1_pct_val, tp2_price, tp2_pct_val,
+        "[LEVELS] %s %s %s entry=%.4f sl=%.4f (%.1f%%) sl_half=%.4f tp1=%.4f tp2=%.4f tp3=%.4f",
+        symbol, direction, tp_info, entry_price,
+        sl_price, sl_pct_val, sl_half_price, tp1_price, tp2_price, tp3_price,
     )
-    return {
-        "sl_price":    round(sl_price, 6),
-        "sl_pct":      round(sl_pct_val, 2),
-        "sl_distance": round(sl_dist, 8),
-        "tp1_price":   round(tp1_price, 6),
-        "tp2_price":   round(tp2_price, 6),
+    result = {
+        "sl_price":      round(sl_price, 6),
+        "sl_half_price": round(sl_half_price, 6),
+        "sl_pct":        round(sl_pct_val, 2),
+        "sl_distance":   round(sl_dist, 8),
+        "tp1_price":     round(tp1_price, 6),
     }
+    if trend_strength in ("HIGH_PROB", "STRONG"):
+        result["tp2_price"] = round(tp2_price, 6)
+    if trend_strength == "HIGH_PROB":
+        result["tp3_price"] = round(tp3_price, 6)
+    return result
 
 
 # ── Dynamic leverage (ADX-based) ──────────────────────────────────────────────
@@ -515,6 +524,9 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             "[ADX OVERRIDE] %s minimum ADX=%d (global=%d)", symbol, adx_min, TC_ADX_MIN
         )
 
+    # Trend strength determined once, used by alert data and calc_sl_tp
+    trend_strength = get_trend_strength(adx_1h, trend)
+
     alerts = []
     for direction in ("LONG", "SHORT"):
         key    = f"{symbol}{direction}"
@@ -565,24 +577,25 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                 # Second consecutive scan — fire confirmed alert
                 _pending.pop(key, None)
                 lev         = get_dynamic_leverage(adx_1h, symbol, direction)
-                sl_tp       = calc_sl_tp(price, direction, symbol)
+                sl_tp       = calc_sl_tp(price, direction, trend_strength, symbol)
                 dollar_risk = round(MARGIN_PER_TRADE * lev * SL_PCT, 2)
                 alert_data  = {
-                    "symbol":       symbol,
-                    "direction":    direction,
-                    "trend":        trend,
-                    "adx":          round(adx_1h, 1),
-                    "rsi_1h":       round(rsi_1h, 1),
-                    "j1h":          j1h_clamped,
-                    "volume_ratio": vol_ratio,
-                    "entry_price":  price,
-                    "margin":       MARGIN_PER_TRADE,
-                    "leverage":     lev,
-                    "dollar_risk":  dollar_risk,
-                    "score":        4,
+                    "symbol":         symbol,
+                    "direction":      direction,
+                    "trend":          trend,
+                    "trend_strength": trend_strength,
+                    "adx":            round(adx_1h, 1),
+                    "rsi_1h":         round(rsi_1h, 1),
+                    "j1h":            j1h_clamped,
+                    "volume_ratio":   vol_ratio,
+                    "entry_price":    price,
+                    "margin":         MARGIN_PER_TRADE,
+                    "leverage":       lev,
+                    "dollar_risk":    dollar_risk,
+                    "score":          4,
                     **sl_tp,
-                    "fired_at":     int(time.time()),
-                    "status":       "",
+                    "fired_at":       int(time.time()),
+                    "status":         "",
                 }
                 alerts.append(alert_data)
                 _confirmed_at[key] = time.time()
@@ -607,8 +620,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             _last_result[key] = False
             _pending.pop(key, None)
 
-    walls          = compute_walls(orderbook, price, symbol)
-    trend_strength = get_trend_strength(adx_1h, trend)
+    walls = compute_walls(orderbook, price, symbol)
 
     return {
         "symbol":         symbol,
@@ -635,17 +647,10 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     }
 
 
-async def run_full_scan(client: HLClient) -> tuple[list[dict] | None, list[dict]]:
-    """Returns (pair_states, new_alerts).
-    pair_states is None when the session filter blocks the scan (caller keeps
-    existing pair_states unchanged).  new_alerts is always an empty list when
-    blocked.
+async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
+    """Returns (pair_states, new_alerts). Scans all pairs unconditionally.
+    SESSION_FILTER_ENABLED is display-only and never blocks scanning.
     """
-    # ── Session filter ────────────────────────────────────────────────────────
-    if SESSION_FILTER_ENABLED and not is_trading_session():
-        logger.info("[SESSION] outside trading hours — scan skipped")
-        return None, []
-
     results = []
     for i, sym in enumerate(PAIRS):
         if i > 0:
