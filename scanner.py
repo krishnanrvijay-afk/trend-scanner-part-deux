@@ -321,6 +321,53 @@ def get_ma_values(df_1h: pd.DataFrame) -> tuple[float, float, float]:
     )
 
 
+def compute_ma_data(df: pd.DataFrame, price: float) -> dict:
+    """MA5/10/30/60, stack classification, and direction arrows for one timeframe."""
+    if df is None or len(df) < 5:
+        return {
+            "ma5": None, "ma10": None, "ma30": None, "ma60": None,
+            "ma5_dir": "FLAT", "ma10_dir": "FLAT", "ma30_dir": "FLAT", "ma60_dir": "FLAT",
+            "stack": "NEUTRAL", "price": round(float(price), 6),
+        }
+    close = df["close"]
+    n     = len(close)
+
+    def sma(period):
+        return round(float(close.rolling(period).mean().iloc[-1]), 6) if n >= period else None
+
+    def sma_prev(period):
+        return float(close.rolling(period).mean().iloc[-2]) if n >= period + 1 else None
+
+    def dir_arrow(curr, prev):
+        if curr is None or prev is None or prev == 0:
+            return "FLAT"
+        return "FLAT" if abs(curr - prev) / prev * 100 <= 0.01 else ("UP" if curr > prev else "DOWN")
+
+    ma5, ma10, ma30, ma60 = sma(5), sma(10), sma(30), sma(60)
+
+    if all(v is not None for v in [ma5, ma10, ma30, ma60]):
+        if price > ma5 > ma10 > ma30 > ma60:
+            stack = "BULL"
+        elif price < ma5 < ma10 < ma30 < ma60:
+            stack = "BEAR"
+        elif ma5 > ma10:
+            stack = "MIXED"
+        else:
+            stack = "NEUTRAL"
+    else:
+        stack = "NEUTRAL"
+
+    return {
+        "ma5":     ma5,  "ma10":    ma10,  "ma30":    ma30,  "ma60":    ma60,
+        "ma5_dir":  dir_arrow(ma5,  sma_prev(5)),
+        "ma10_dir": dir_arrow(ma10, sma_prev(10)),
+        "ma30_dir": dir_arrow(ma30, sma_prev(30)),
+        "ma60_dir": dir_arrow(ma60, sma_prev(60)),
+        "stack": stack,
+        "price": round(float(price), 6),
+    }
+
+
 # ── Indicator extractions ─────────────────────────────────────────────────────
 
 def compute_rsi_1h_pair(df_1h: pd.DataFrame) -> tuple[float, float]:
@@ -572,6 +619,35 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             return stale
         return {"symbol": symbol, "error": str(e), "data_stale": True}
 
+    # 5m / 15m candle cache — slot-based (refreshes every 5m / 15m interval)
+    now_5m_slot  = int(time.time()) // 300
+    now_15m_slot = int(time.time()) // 900
+    cached_5m    = _candle_cache.get(f"{symbol}_5m")
+    cached_15m   = _candle_cache.get(f"{symbol}_15m")
+    need_5m      = not (cached_5m  and cached_5m.get("slot")  == now_5m_slot)
+    need_15m     = not (cached_15m and cached_15m.get("slot") == now_15m_slot)
+    try:
+        fetch_tasks = []
+        if need_5m:  fetch_tasks.append(client.get_candles(symbol, "5m",  70))
+        if need_15m: fetch_tasks.append(client.get_candles(symbol, "15m", 70))
+        if fetch_tasks:
+            fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            idx = 0
+            if need_5m:
+                raw = fetched[idx]; idx += 1
+                if isinstance(raw, list) and raw:
+                    _candle_cache[f"{symbol}_5m"] = {"candles": raw, "slot": now_5m_slot}
+                    cached_5m = {"candles": raw}
+            if need_15m:
+                raw = fetched[idx]
+                if isinstance(raw, list) and raw:
+                    _candle_cache[f"{symbol}_15m"] = {"candles": raw, "slot": now_15m_slot}
+                    cached_15m = {"candles": raw}
+    except Exception as e_tf:
+        logger.warning("[CACHE] %s 5m/15m fetch error: %s", symbol, e_tf)
+    candles_5m_raw  = (cached_5m  or {}).get("candles", [])
+    candles_15m_raw = (cached_15m or {}).get("candles", [])
+
     if not candles_1h_raw or price is None:
         lkg = _last_known_good.get(symbol)
         if lkg:
@@ -581,7 +657,9 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             return stale
         return {"symbol": symbol, "error": "Insufficient data", "data_stale": True}
 
-    df_1h = pd.DataFrame(candles_1h_raw)
+    df_1h  = pd.DataFrame(candles_1h_raw)
+    df_5m  = pd.DataFrame(candles_5m_raw)  if len(candles_5m_raw)  >= 5 else None
+    df_15m = pd.DataFrame(candles_15m_raw) if len(candles_15m_raw) >= 5 else None
     if len(df_1h) < 61:
         lkg = _last_known_good.get(symbol)
         if lkg:
@@ -720,7 +798,14 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             _last_result[key] = False
             _pending.pop(key, None)
 
-    walls = compute_walls(orderbook, price, symbol)
+    walls   = compute_walls(orderbook, price, symbol)
+    ma_data = {
+        "timeframes": {
+            "5m":  compute_ma_data(df_5m,  price),
+            "15m": compute_ma_data(df_15m, price),
+            "1h":  compute_ma_data(df_1h,  price),
+        }
+    }
 
     result = {
         "symbol":         symbol,
@@ -740,6 +825,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
         "ma10":           round(ma10, 4),
         "ma30":           round(ma30, 4),
         "ma60":           round(ma60, 4),
+        "ma_data":        ma_data,
         "alerts":         alerts,
         "gates_status":   compute_gates_status(
             price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min
