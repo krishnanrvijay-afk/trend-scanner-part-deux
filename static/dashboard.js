@@ -633,11 +633,11 @@ function renderSidePanel() {
   if (momEl) {
     let html = '';
     if ((mb.overbought || []).length > 0) {
-      html += `<div style="font-size:9px;color:#ff4444;font-weight:700;margin-bottom:2px">OB J&gt;80</div>`;
+      html += `<div style="font-size:12px;color:#ff4444;font-weight:700;margin-bottom:2px">OB J&gt;80</div>`;
       html += `<div class="sp-chips" style="margin-bottom:4px">${chips(mb.overbought, '#ff4444')}</div>`;
     }
     if ((mb.oversold  || []).length > 0) {
-      html += `<div style="font-size:9px;color:#00ff88;font-weight:700;margin-bottom:2px">OS J&lt;20</div>`;
+      html += `<div style="font-size:12px;color:#00ff88;font-weight:700;margin-bottom:2px">OS J&lt;20</div>`;
       html += `<div class="sp-chips">${chips(mb.oversold, '#00ff88')}</div>`;
     }
     momEl.innerHTML = html || '<span style="color:#333;font-size:9px">—</span>';
@@ -652,7 +652,6 @@ function renderSidePanel() {
     const regimeLabel  = regime === 'Strong Bull' ? 'BULL'                  : regime === 'Strong Bear' ? 'BEAR'                  : 'NEUTRAL';
     btcEl.innerHTML = `<div class="sp-regime-badge" style="background:${regimeBg};border:1px solid ${regimeBorder}">` +
       `<div class="sp-regime-text" style="color:${regimeColor}">${regimeLabel}</div>` +
-      `<div class="sp-regime-sub">${regime}</div>` +
       `</div>`;
   }
 
