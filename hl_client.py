@@ -300,5 +300,21 @@ class HLClient:
                 return p["unrealized_pnl"]
         return None
 
+    async def get_24h_change(self, symbol: str) -> Optional[float]:
+        """Return 24h price change % using the most recent daily candle (close vs open)."""
+        try:
+            candles = await self.get_candles(symbol, "1d", 2)
+            if not candles:
+                return None
+            candle = candles[-1]
+            open_price  = candle.get("open",  0)
+            close_price = candle.get("close", 0)
+            if not open_price:
+                return None
+            return round((close_price - open_price) / open_price * 100, 2)
+        except Exception as e:
+            print(f"[HLClient] get_24h_change({symbol}) error: {e}")
+            return None
+
     async def close(self):
         await self._http.aclose()
