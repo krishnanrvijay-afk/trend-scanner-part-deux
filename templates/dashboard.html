@@ -909,6 +909,77 @@
       flex-shrink: 0;
     }
     tr.active-sym .sym { color: #00ff88 !important; text-decoration: underline; text-underline-offset: 3px; }
+    /* ── View toggle ─────────────────────────────────────── */
+    .view-toggle { margin-left:auto; display:flex; gap:3px; flex-shrink:0; }
+    .view-btn {
+      background:#0f0f0f; border:1px solid #1e1e1e; border-radius:3px;
+      padding:3px 8px; font-family:'JetBrains Mono',monospace; font-size:9px;
+      font-weight:700; color:#444; cursor:pointer; letter-spacing:0.5px;
+    }
+    .view-btn.active { background:#1e1e1e; border-color:#555; color:#fff; }
+    /* ── Filter bar ───────────────────────────────────────── */
+    #filter-bar {
+      display:none; flex-direction:row; gap:5px; padding:5px 8px;
+      overflow-x:auto; scrollbar-width:none;
+      background:var(--surface); border-bottom:1px solid var(--border);
+    }
+    #filter-bar::-webkit-scrollbar { display:none; }
+    .filter-pill {
+      display:inline-flex; align-items:center; padding:3px 10px;
+      border:1px solid #222; border-radius:12px;
+      font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700;
+      color:#555; cursor:pointer; white-space:nowrap; flex-shrink:0;
+      background:transparent; letter-spacing:0.4px;
+    }
+    .filter-pill.active { background:#1a1a1a; border-color:#444; color:#fff; }
+    .filter-pill.fp-bear   { color:#ff4444; border-color:rgba(255,68,68,0.3); }
+    .filter-pill.fp-bull   { color:#00ff88; border-color:rgba(0,255,136,0.3); }
+    .filter-pill.fp-alerts { color:#ffaa00; border-color:rgba(255,170,0,0.3); }
+    .filter-pill.fp-trades { color:#00ff88; border-color:rgba(0,255,136,0.3); }
+    /* ── Card grid ────────────────────────────────────────── */
+    #card-grid {
+      display:none; grid-template-columns:1fr 1fr; gap:7px; padding:8px; align-content:start;
+    }
+    .pair-card {
+      background:#0a0c10; border:1px solid #1a1a1a; border-radius:8px; overflow:hidden;
+    }
+    .pair-card.state-pending { border-color:rgba(255,170,0,0.35); }
+    .pair-card.state-alert   { border-color:rgba(0,255,136,0.35); }
+    .pair-card.state-trade   { border:2px solid rgba(0,255,136,0.4); }
+    .pair-card.hp-bull { border-left:3px solid #00ff88; }
+    .pair-card.hp-bear { border-left:3px solid #ff4444; }
+    .pair-card.card-strong { border-left:3px solid #ffaa00; }
+    .card-row1 {
+      display:flex; align-items:flex-start; justify-content:space-between; padding:7px 8px 2px; gap:4px;
+    }
+    .card-identity {
+      display:flex; align-items:center; gap:3px; flex-wrap:nowrap; overflow:hidden; min-width:0;
+    }
+    .card-sym { font-family:'Bebas Neue',sans-serif; font-size:19px; color:#fff; line-height:1; flex-shrink:0; }
+    .card-price-col { text-align:right; flex-shrink:0; }
+    .card-price { font-family:'JetBrains Mono',monospace; font-size:14px; font-weight:700; color:#fff; display:block; }
+    .card-row2, .card-row3 {
+      display:flex; align-items:center; gap:3px; padding:2px 8px; overflow-x:auto; scrollbar-width:none;
+    }
+    .card-row2::-webkit-scrollbar, .card-row3::-webkit-scrollbar { display:none; }
+    .card-pill {
+      display:flex; flex-direction:column; align-items:center;
+      background:#111; border:1px solid #1e1e1e; border-radius:4px;
+      padding:3px 5px; flex-shrink:0; gap:1px; min-width:28px;
+    }
+    .card-pill-label {
+      font-size:7px; font-weight:700; color:#fff; text-transform:uppercase;
+      letter-spacing:0.4px; line-height:1; white-space:nowrap;
+    }
+    .card-pill-val { font-size:10px; font-weight:700; font-family:'JetBrains Mono',monospace; line-height:1; }
+    .card-row4 { padding:4px 8px 6px; }
+    .card-depth-bar { height:2px; border-radius:1px; overflow:hidden; background:rgba(255,68,68,0.4); margin-bottom:4px; }
+    .card-depth-bar-fill { height:100%; background:rgba(0,255,136,0.7); border-radius:1px; }
+    .card-depth-cols { display:flex; justify-content:space-between; align-items:flex-start; }
+    .card-signal-badge {
+      padding:5px 8px; display:flex; align-items:center; gap:5px;
+      font-size:10px; font-weight:700; font-family:'JetBrains Mono',monospace; letter-spacing:0.04em;
+    }
   </style>
 </head>
 <body>
@@ -1029,6 +1100,21 @@
   <span style="color:#ffffff">12 pairs</span>
   <span style="color:#444444;margin:0 5px">·</span>
   <span id="pulse-signals" style="color:#00ff88;font-weight:bold">—</span>&nbsp;<span style="color:#ffffff">signals</span>
+  <div class="view-toggle">
+    <button class="view-btn active" id="view-btn-table" onclick="setViewMode('table')">TABLE</button>
+    <button class="view-btn"        id="view-btn-cards" onclick="setViewMode('cards')">CARDS</button>
+  </div>
+</div>
+
+<!-- Filter bar (cards mode only) -->
+<div id="filter-bar">
+  <button class="filter-pill active" data-filter="all"    onclick="setFilter('all')">ALL <span id="filter-count">12</span></button>
+  <button class="filter-pill fp-bear"  data-filter="bear"   onclick="setFilter('bear')">BEAR</button>
+  <button class="filter-pill fp-bull"  data-filter="bull"   onclick="setFilter('bull')">BULL</button>
+  <button class="filter-pill fp-alerts" data-filter="alerts" onclick="setFilter('alerts')">⏳ ALERTS</button>
+  <button class="filter-pill fp-trades" data-filter="trades" onclick="setFilter('trades')">● TRADES</button>
+  <button class="filter-pill" data-filter="hp"     onclick="setFilter('hp')">HIGH PROB</button>
+  <button class="filter-pill" data-filter="strong" onclick="setFilter('strong')">STRONG</button>
 </div>
 
 <!-- Tab bar -->
@@ -1050,6 +1136,8 @@
 
 <!-- TAB 1: SCANNER -->
 <div id="tab-scanner" class="tab-content active">
+  <!-- Card grid (cards view mode) -->
+  <div id="card-grid"></div>
   <div class="scanner-layout">
     <!-- Pair table -->
     <div class="table-panel">
