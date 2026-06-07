@@ -218,20 +218,38 @@ class HLClient:
         margin_usdc: float,
         leverage: int,
         entry_price: Optional[float] = None,
+        order_type: str = "MARKET",
+        limit_px: Optional[float] = None,
+        sl_price: Optional[float] = None,
     ) -> dict:
+        is_buy = direction.upper() == "LONG"
+
         if self._paper_mode:
-            price = entry_price or await self.get_price(symbol) or 0.0
-            size = (margin_usdc * leverage) / price if price > 0 else 0.0
+            price = entry_price or limit_px or await self.get_price(symbol) or 0.0
+            size  = (margin_usdc * leverage) / price if price > 0 else 0.0
+            if order_type == "LIMIT" and limit_px:
+                return {
+                    "status":    "pending",
+                    "paper":     True,
+                    "order_id":  f"paper-{int(time.time())}",
+                    "symbol":    symbol,
+                    "direction": direction,
+                    "limit_px":  limit_px,
+                    "size":      size,
+                    "margin":    margin_usdc,
+                    "leverage":  leverage,
+                    "timestamp": int(time.time()),
+                }
             return {
-                "status": "ok",
-                "paper": True,
-                "symbol": symbol,
-                "direction": direction,
+                "status":      "ok",
+                "paper":       True,
+                "symbol":      symbol,
+                "direction":   direction,
                 "entry_price": price,
-                "size": size,
-                "margin": margin_usdc,
-                "leverage": leverage,
-                "timestamp": int(time.time()),
+                "size":        size,
+                "margin":      margin_usdc,
+                "leverage":    leverage,
+                "timestamp":   int(time.time()),
             }
 
         try:
@@ -239,29 +257,75 @@ class HLClient:
                 return {"status": "error", "msg": "Live client not initialized"}
 
             price = entry_price or await self.get_price(symbol) or 0.0
-            size = round((margin_usdc * leverage) / price, 6) if price > 0 else 0.0
-            is_buy = direction.upper() == "LONG"
+            size  = round((margin_usdc * leverage) / price, 6) if price > 0 else 0.0
 
-            order_result = self._exchange.order(
-                symbol,
-                is_buy,
-                size,
-                price,
-                {"limit": {"tif": "Ioc"}},
-            )
+            if order_type == "LIMIT" and limit_px:
+                exec_px          = limit_px
+                entry_order_type = {"limit": {"tif": "Gtc"}}
+            else:
+                exec_px          = price
+                entry_order_type = {"limit": {"tif": "Ioc"}}
+
+            orders = [
+                {
+                    "coin":        symbol,
+                    "is_buy":      is_buy,
+                    "sz":          size,
+                    "limit_px":    exec_px,
+                    "order_type":  entry_order_type,
+                    "reduce_only": False,
+                }
+            ]
+
+            if sl_price:
+                orders.append({
+                    "coin":        symbol,
+                    "is_buy":      not is_buy,
+                    "sz":          size,
+                    "limit_px":    sl_price,
+                    "order_type":  {
+                        "trigger": {
+                            "isMarket":  True,
+                            "triggerPx": sl_price,
+                            "tpsl":      "sl",
+                        }
+                    },
+                    "reduce_only": True,
+                })
+
+            try:
+                order_result = self._exchange.bulk_orders(orders)
+            except AttributeError:
+                order_result = self._exchange.order(
+                    symbol, is_buy, size, exec_px, entry_order_type
+                )
+
             return {
-                "status": "ok",
-                "paper": False,
-                "symbol": symbol,
-                "direction": direction,
-                "entry_price": price,
-                "size": size,
-                "margin": margin_usdc,
-                "leverage": leverage,
-                "timestamp": int(time.time()),
-                "raw": order_result,
+                "status":      "ok",
+                "paper":       False,
+                "symbol":      symbol,
+                "direction":   direction,
+                "entry_price": exec_px,
+                "size":        size,
+                "margin":      margin_usdc,
+                "leverage":    leverage,
+                "timestamp":   int(time.time()),
+                "raw":         order_result,
             }
         except Exception as e:
+            return {"status": "error", "msg": str(e)}
+
+    async def cancel_order(self, coin: str, order_id: str) -> dict:
+        if self._paper_mode:
+            print(f"[HLClient] cancel_order paper: {coin} {order_id}")
+            return {"status": "ok", "paper": True}
+        try:
+            if not self._exchange:
+                return {"status": "error", "msg": "Live client not initialized"}
+            result = self._exchange.cancel(coin, int(order_id))
+            return {"status": "ok", "raw": result}
+        except Exception as e:
+            print(f"[HLClient] cancel_order({coin}, {order_id}) error: {e}")
             return {"status": "error", "msg": str(e)}
 
     async def close_position(self, symbol: str, direction: str, size: float) -> dict:
