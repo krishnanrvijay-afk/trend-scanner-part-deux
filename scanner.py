@@ -14,6 +14,7 @@ from config import (
     MARGIN_PER_TRADE,
     PAPER_MODE,
     BTC_REGIME_FILTER_ENABLED,
+    STRONG_CANCEL_CYCLES, REGULAR_CANCEL_CYCLES,
 )
 from hl_client import HLClient
 
@@ -238,6 +239,77 @@ def get_directional_trend_strength(adx: float, trend: str) -> str:
     else:
         return "NEUTRAL"
     return f"{tier}_{suffix}"
+
+
+def check_limit_order_cancellation(alert: dict, pair_state: dict) -> tuple[bool, str]:
+    """
+    Check whether a pending LIMIT order should be cancelled.
+    Returns (should_cancel, reason_msg).
+    Cancellation conditions:
+      C1 — Trend changed from signal direction
+      C2 — ADX collapsed below minimum
+      C3 — Gate that was passing at alert time now fails
+      C4 — Time ceiling exceeded for this tier
+    """
+    symbol    = alert["symbol"]
+    direction = alert["direction"]
+    snap      = alert.get("conditions_snapshot", {})
+    cycles    = alert.get("scan_cycles_since_alert", 0)
+    tier      = alert.get("trend_strength", "REGULAR")
+
+    current_trend = pair_state.get("trend", "Neutral")
+    current_adx   = float(pair_state.get("adx", 0) or 0)
+    gs            = pair_state.get("gates_status", {})
+    adx_min       = PAIR_ADX_OVERRIDES.get(symbol, TC_ADX_MIN)
+
+    # C1 — Trend changed from signal direction
+    if direction == "LONG" and current_trend != "Strong Bull":
+        return True, (
+            f"[CANCEL] {symbol} {direction} — trend changed to {current_trend!r} "
+            f"after {cycles} cycles"
+        )
+    if direction == "SHORT" and current_trend != "Strong Bear":
+        return True, (
+            f"[CANCEL] {symbol} {direction} — trend changed to {current_trend!r} "
+            f"after {cycles} cycles"
+        )
+
+    # C2 — ADX collapsed below minimum
+    if current_adx < adx_min:
+        return True, (
+            f"[CANCEL] {symbol} {direction} — ADX collapsed to {current_adx:.1f} "
+            f"(min={adx_min}) after {cycles} cycles"
+        )
+
+    # C3 — Gate that was passing at alert time now fails
+    gate_map = {
+        "trend_pass": "TREND",
+        "adx_pass":   "ADX",
+        "depth_pass": "DEPTH",
+        "ma_pass":    "MA",
+    }
+    for gate_key, gate_name in gate_map.items():
+        was_passing = snap.get(gate_key, True)
+        now_passing = gs.get(gate_key, True)
+        if was_passing and not now_passing:
+            return True, (
+                f"[CANCEL] {symbol} {direction} — {gate_name} gate failed "
+                f"after {cycles} cycles"
+            )
+
+    # C4 — Time ceiling
+    if tier == "STRONG" and cycles >= STRONG_CANCEL_CYCLES:
+        return True, (
+            f"[CANCEL] {symbol} {direction} — time ceiling {STRONG_CANCEL_CYCLES} "
+            f"cycles reached (STRONG tier)"
+        )
+    if tier in ("REGULAR", "NEUTRAL") and cycles >= REGULAR_CANCEL_CYCLES:
+        return True, (
+            f"[CANCEL] {symbol} {direction} — time ceiling {REGULAR_CANCEL_CYCLES} "
+            f"cycles reached (REGULAR tier)"
+        )
+
+    return False, ""
 
 
 def get_ma_values(df_1h: pd.DataFrame) -> tuple[float, float, float]:
@@ -602,6 +674,7 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "direction":      direction,
                     "trend":          trend,
                     "trend_strength": trend_strength,
+                    "trend_pill":     get_directional_trend_strength(adx_1h, trend),
                     "adx":            round(adx_1h, 1),
                     "rsi_1h":         round(rsi_1h, 1),
                     "j1h":            j1h_clamped,
@@ -612,8 +685,17 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
                     "dollar_risk":    dollar_risk,
                     "score":          4,
                     **sl_tp,
-                    "fired_at":       int(time.time()),
-                    "status":         "",
+                    "fired_at":                int(time.time()),
+                    "status":                  "",
+                    "scan_cycles_since_alert": 0,
+                    "conditions_snapshot": {
+                        "trend_pass": conds.get("trend_pass", True),
+                        "adx_pass":   conds.get("adx_pass",   True),
+                        "depth_pass": conds.get("depth_pass", True),
+                        "ma_pass":    conds.get("ma_pass",    True),
+                        "trend":      trend,
+                        "adx":        round(adx_1h, 1),
+                    },
                 }
                 alerts.append(alert_data)
                 _confirmed_at[key] = time.time()
