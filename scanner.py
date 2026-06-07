@@ -247,6 +247,19 @@ def classify_trend(df_1h: pd.DataFrame) -> str:
     return "Neutral"
 
 
+def get_trend_strength(adx: float, trend: str) -> str:
+    """Return ADX-tiered trend strength label."""
+    if trend == "Neutral":
+        return "NEUTRAL"
+    if adx >= 60:
+        return "HIGH_PROB"
+    elif adx >= 40:
+        return "STRONG"
+    elif adx >= 25:
+        return "REGULAR"
+    return "NEUTRAL"
+
+
 def get_ma_values(df_1h: pd.DataFrame) -> tuple[float, float, float]:
     close = df_1h["close"]
     return (
@@ -291,6 +304,40 @@ def compute_depth_pcts(orderbook: dict) -> tuple[float, float]:
     if total == 0:
         return 50.0, 50.0
     return bid_total / total * 100, ask_total / total * 100
+
+
+# ── Wall detection ────────────────────────────────────────────────────────────
+
+def compute_walls(orderbook: dict, current_price: float, symbol: str = "?") -> dict:
+    """Find the largest single price level within 2% of current price on each side."""
+    if current_price <= 0:
+        return {"bid_wall": None, "ask_wall": None}
+    pct_range = current_price * 0.02
+
+    bid_wall_price: Optional[float] = None
+    bid_wall_sz = 0.0
+    for b in orderbook.get("bids", []):
+        px, sz = b.get("px", 0.0), b.get("sz", 0.0)
+        if px > 0 and (current_price - px) <= pct_range and sz > bid_wall_sz:
+            bid_wall_sz  = sz
+            bid_wall_price = px
+
+    ask_wall_price: Optional[float] = None
+    ask_wall_sz = 0.0
+    for a in orderbook.get("asks", []):
+        px, sz = a.get("px", 0.0), a.get("sz", 0.0)
+        if px > 0 and (px - current_price) <= pct_range and sz > ask_wall_sz:
+            ask_wall_sz  = sz
+            ask_wall_price = px
+
+    if bid_wall_price is not None or ask_wall_price is not None:
+        logger.info(
+            "[WALL] %s bid_wall=%s ask_wall=%s",
+            symbol,
+            f"{bid_wall_price:.4f}" if bid_wall_price else "None",
+            f"{ask_wall_price:.4f}" if ask_wall_price else "None",
+        )
+    return {"bid_wall": bid_wall_price, "ask_wall": ask_wall_price}
 
 
 # ── 4-condition signal check ──────────────────────────────────────────────────
@@ -428,10 +475,11 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
     global _btc_regime
 
     try:
-        candles_1h_raw, orderbook, price = await asyncio.gather(
+        candles_1h_raw, orderbook, price, change_24h = await asyncio.gather(
             client.get_candles(symbol, "1h", 80),
             client.get_orderbook(symbol, 20),
             client.get_price(symbol),
+            client.get_24h_change(symbol),
         )
     except Exception as e:
         print(f"[scanner] Data fetch error for {symbol}: {e}")
@@ -559,24 +607,31 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
             _last_result[key] = False
             _pending.pop(key, None)
 
+    walls          = compute_walls(orderbook, price, symbol)
+    trend_strength = get_trend_strength(adx_1h, trend)
+
     return {
-        "symbol":       symbol,
-        "price":        price,
-        "trend":        trend,
-        "adx":          round(adx_1h, 1),
-        "j5":           j1h_clamped,   # kept as j5 for JS compatibility
-        "bid_pct":      round(bid_pct, 1),
-        "ask_pct":      round(ask_pct, 1),
-        "rsi_1h":       round(rsi_1h, 1),
-        "vol_ratio":    vol_ratio,
-        "ma10":         round(ma10, 4),
-        "ma30":         round(ma30, 4),
-        "ma60":         round(ma60, 4),
-        "alerts":       alerts,
-        "gates_status": compute_gates_status(
+        "symbol":         symbol,
+        "price":          price,
+        "trend":          trend,
+        "trend_strength": trend_strength,
+        "adx":            round(adx_1h, 1),
+        "j5":             j1h_clamped,   # kept as j5 for JS compatibility
+        "bid_pct":        round(bid_pct, 1),
+        "ask_pct":        round(ask_pct, 1),
+        "bid_wall":       walls["bid_wall"],
+        "ask_wall":       walls["ask_wall"],
+        "change_24h":     change_24h,
+        "rsi_1h":         round(rsi_1h, 1),
+        "vol_ratio":      vol_ratio,
+        "ma10":           round(ma10, 4),
+        "ma30":           round(ma30, 4),
+        "ma60":           round(ma60, 4),
+        "alerts":         alerts,
+        "gates_status":   compute_gates_status(
             price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min
         ),
-        "scanned_at":   int(time.time()),
+        "scanned_at":     int(time.time()),
     }
 
 
