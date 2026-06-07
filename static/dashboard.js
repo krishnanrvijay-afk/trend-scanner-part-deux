@@ -237,26 +237,8 @@ function renderHeader() {
   const pct = acc.cap_pct || 0;
   const capColor = pct >= 90 ? '#ff4444' : pct >= 70 ? '#ffaa00' : '#00ff88';
 
-  const marginEl = document.getElementById('hc-margin');
-  if (marginEl) {
-    marginEl.textContent = `${fmt(acc.margin_deployed, 0)} / ${fmt(acc.cap, 0)} USDC`;
-    marginEl.style.color = capColor;
-  }
-
   const tradesEl = document.getElementById('hc-trades');
   if (tradesEl) tradesEl.textContent = `${acc.trades_opened ?? 0} opened`;
-
-  const capPctEl = document.getElementById('hc-cap-pct');
-  if (capPctEl) {
-    capPctEl.textContent = `${fmt(pct, 1)}%`;
-    capPctEl.style.color = capColor;
-  }
-
-  const capBar = document.getElementById('hc-cap-bar');
-  if (capBar) {
-    capBar.style.width = Math.min(pct, 100) + '%';
-    capBar.className = 'hc-capbar-fill ' + (pct >= 90 ? 'cap-red' : pct >= 70 ? 'cap-yellow' : 'cap-green');
-  }
 
   const lastScan = state.last_scan_at;
   const scanAgoEl = document.getElementById('hc-scan-ago');
@@ -295,15 +277,6 @@ function renderHeader() {
   const sigEl = document.getElementById('hc-signals');
   if (sigEl) sigEl.textContent = (state.alerts || []).length;
 
-  const slotsUsed  = acc.slots_used  ?? 0;
-  const maxSlots   = acc.max_slots   ?? 2;
-  const slotsEl    = document.getElementById('hc-slots');
-  if (slotsEl) {
-    const slotsColor = slotsUsed >= maxSlots ? '#ff4444' : slotsUsed > 0 ? '#ffaa00' : '#00ff88';
-    slotsEl.textContent = `${slotsUsed}/${maxSlots}`;
-    slotsEl.style.color = slotsColor;
-  }
-
   const daily      = state.daily || {};
   const dailyPnl   = daily.pnl   ?? null;
   const dailyHalted = daily.halted ?? false;
@@ -313,13 +286,6 @@ function renderHeader() {
     const pnlSign  = dailyPnl >= 0 ? '+' : '';
     pnlEl.textContent = `${pnlSign}$${fmt(dailyPnl, 2)}`;
     pnlEl.style.color = pnlColor;
-  }
-
-  const sessionEl = document.getElementById('hc-session');
-  if (sessionEl && !sessionEl.dataset.set) {
-    sessionEl.textContent  = 'ALWAYS OPEN';
-    sessionEl.style.color  = '#00ff88';
-    sessionEl.dataset.set  = '1';
   }
 
   const btcRegime = state.btc_regime || 'Neutral';
@@ -501,6 +467,10 @@ function buildPairRowHtml(p) {
 
   const adxColor = adx >= 30 ? '#00ff88' : '#666666';
 
+  const j5    = p.j5 ?? null;
+  const jColor = j5 === null ? '#444444' : j5 <= 20 ? '#00ff88' : j5 >= 80 ? '#ff4444' : '#ffffff';
+  const jHtml  = j5 !== null ? fmt(j5, 1) : '—';
+
   const cdSecs = cooldownEndsAt[p.symbol]
     ? Math.max(0, Math.ceil(cooldownEndsAt[p.symbol] - Date.now() / 1000))
     : (p.cooldown_remaining_seconds || 0);
@@ -552,6 +522,7 @@ function buildPairRowHtml(p) {
     `<td class="price-cell" style="text-align:right">${priceHtml}</td>` +
     `<td>${depthPillHtml}</td>` +
     `<td style="color:${adxColor};text-align:right">${fmt(adx, 1)}</td>` +
+    `<td style="color:${jColor};text-align:right;font-weight:700">${jHtml}</td>` +
     `<td style="text-align:center">${gatesCell}</td>` +
     `<td style="text-align:center">${sigCell}</td>` +
     `</tr>`;
