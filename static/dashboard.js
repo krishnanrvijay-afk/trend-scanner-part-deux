@@ -5,6 +5,10 @@ let lastScanCount = -1;
 let prevAlertTradeCount = -1;
 const cooldownEndsAt = {}; // symbol → Unix timestamp (seconds) when cooldown expires
 
+// Tier-based cancel cycle counts (must match config.py)
+const STRONG_CANCEL_CYCLES_JS  = 2;
+const REGULAR_CANCEL_CYCLES_JS = 3;
+
 // ── Utility ───────────────────────────────────────────────────────────────────
 
 function fmt(n, dec = 2) {
@@ -122,6 +126,29 @@ async function openTrade(symbol, direction, exchange = 'HL') {
       showToast(data.detail || 'Failed to open trade');
       return;
     }
+    if (data.status === 'pending') {
+      showToast(`LIMIT order placed at ${fmtPrice(data.limit_px)} on ${exchange} — awaiting fill`);
+    }
+    await fetchState();
+    renderAll();
+  } catch (e) {
+    showToast('Network error: ' + e.message);
+  }
+}
+
+async function cancelLimitOrder(symbol, direction) {
+  try {
+    const res = await fetch('/api/order/limit/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol, direction }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.detail || 'Failed to cancel limit order');
+      return;
+    }
+    showToast(`Limit order cancelled — ${symbol} ${direction}`);
     await fetchState();
     renderAll();
   } catch (e) {
@@ -848,12 +875,65 @@ function buildSignalCard(alert, capReached) {
     </div>`;
   }
 
-  // EXCHANGE BUTTONS
-  const autoInfo  = (state.auto_pending || {})[key];
-  const slotsFull = (state.account || {}).slots_full || false;
-  const dirText   = isLong ? 'LONG' : 'SHORT';
+  // EXCHANGE BUTTONS / AWAITING FILL / CANCELLED states
+  const autoInfo      = (state.auto_pending || {})[key];
+  const plo           = alert.pending_limit_order;   // set when a LIMIT order is live
+  const isCancelled   = !!alert.limit_order_cancelled;
+  const slotsFull     = (state.account || {}).slots_full || false;
+  const dirText       = isLong ? 'LONG' : 'SHORT';
+
+  // Order type hint label (shown in normal state, before buttons)
+  const orderTypeTip  = ts === 'HIGH_PROB'
+    ? `<span style="font-size:9px;color:#444;letter-spacing:.05em">Order type: <span style="color:#00ff88">MARKET</span> (instant fill)</span>`
+    : `<span style="font-size:9px;color:#444;letter-spacing:.05em">Order type: <span style="color:#ffaa00">LIMIT</span> · ${ts === 'STRONG' ? STRONG_CANCEL_CYCLES_JS : REGULAR_CANCEL_CYCLES_JS} scan cycles max</span>`;
+
   let buttonsHtml;
-  if (autoInfo) {
+
+  if (isCancelled) {
+    // CANCELLED flash — show briefly until next poll clears it
+    const cancelReason = alert.limit_order_cancel_reason || '';
+    buttonsHtml = `
+      <div style="padding:10px;border-radius:6px;background:rgba(255,68,68,0.08);
+          border:1px solid rgba(255,68,68,0.3);text-align:center;
+          animation:cancelled-flash 0.6s ease-out">
+        <div style="color:#ff4444;font-size:11px;font-weight:700;letter-spacing:.08em">✕ LIMIT ORDER CANCELLED</div>
+        ${cancelReason ? `<div style="color:#555;font-size:9px;margin-top:4px">${cancelReason.replace(/^\[CANCEL\] \S+ \S+ — /,'')}</div>` : ''}
+      </div>`;
+  } else if (plo) {
+    // AWAITING LIMIT FILL state
+    const cycles     = alert.scan_cycles_since_alert || 0;
+    const maxCycles  = plo.cancel_after_cycles || 3;
+    const remaining  = Math.max(0, maxCycles - cycles);
+    const pct        = Math.max(0, Math.min(100, (remaining / maxCycles) * 100));
+    const exchLabel  = plo.exchange || 'HL';
+    const exchColor  = exchLabel === 'MEXC' ? '#f59e0b' : '#60a5fa';
+    const exchBg     = exchLabel === 'MEXC' ? 'rgba(245,158,11,0.15)' : 'rgba(59,130,246,0.15)';
+    const exchBorder = exchLabel === 'MEXC' ? 'rgba(245,158,11,0.3)' : 'rgba(59,130,246,0.3)';
+
+    buttonsHtml = `
+      <div style="border-radius:6px;border:1px solid rgba(255,170,0,0.3);background:rgba(255,170,0,0.06);overflow:hidden">
+        <div style="padding:8px 12px;display:flex;align-items:center;gap:8px">
+          <span style="color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.06em;animation:pending-pulse 1.4s infinite">⏳ AWAITING FILL</span>
+          <span style="background:${exchBg};border:1px solid ${exchBorder};border-radius:3px;padding:1px 6px;font-size:9px;color:${exchColor};font-weight:700">${exchLabel}</span>
+          <span style="flex:1"></span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#fff">${fmtPrice(plo.limit_px)}</span>
+        </div>
+        <div style="padding:0 12px 4px;display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:3px;background:#1a1e2a;border-radius:2px;overflow:hidden">
+            <div style="width:${pct}%;height:100%;background:#ffaa00;border-radius:2px;transition:width .3s"></div>
+          </div>
+          <span style="font-size:9px;color:#555;white-space:nowrap">${remaining} cycle${remaining !== 1 ? 's' : ''} left</span>
+        </div>
+        <div style="padding:6px 12px 8px">
+          <button onclick="cancelLimitOrder('${alert.symbol}','${alert.direction}')"
+            style="width:100%;padding:6px;border-radius:4px;border:1px solid rgba(255,68,68,0.3);
+              background:rgba(255,68,68,0.08);color:#ff4444;font-family:var(--font);
+              font-size:10px;font-weight:700;letter-spacing:.06em;cursor:pointer">
+            ✕ CANCEL ORDER
+          </button>
+        </div>
+      </div>`;
+  } else if (autoInfo) {
     const remaining = Math.max(0, Math.ceil(autoInfo.fire_at - Date.now() / 1000));
     const label = remaining > 0 ? `AUTO IN ${remaining}s` : 'OPENING…';
     buttonsHtml = `<button class="pill pill-open" style="background:#ffaa00;color:#000;cursor:default;width:100%;padding:10px;font-size:11px" data-auto-key="${key}">${label}</button>`;
@@ -861,24 +941,26 @@ function buildSignalCard(alert, capReached) {
     buttonsHtml = `<button class="pill" style="background:rgba(80,80,80,0.15);border:1px solid #444;color:#555;cursor:not-allowed;width:100%;padding:10px;font-size:11px" disabled>⛔ SLOTS FULL</button>`;
   } else {
     const dis = capReached ? 'disabled style="opacity:0.4;cursor:not-allowed"' : '';
-    buttonsHtml = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <button ${dis} onclick="openTrade('${alert.symbol}', '${alert.direction}', 'MEXC')"
-        style="padding:10px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);
-          background:rgba(245,158,11,0.1);color:#f59e0b;font-family:var(--font);
-          font-size:11px;font-weight:700;letter-spacing:.05em;cursor:pointer;
-          display:flex;align-items:center;justify-content:center;gap:6px">
-        <span style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:3px;padding:1px 5px;font-size:9px">MEXC</span>
-        OPEN ${dirText}
-      </button>
-      <button ${dis} onclick="openTrade('${alert.symbol}', '${alert.direction}', 'HL')"
-        style="padding:10px;border-radius:6px;border:1px solid rgba(59,130,246,0.4);
-          background:rgba(59,130,246,0.1);color:#60a5fa;font-family:var(--font);
-          font-size:11px;font-weight:700;letter-spacing:.05em;cursor:pointer;
-          display:flex;align-items:center;justify-content:center;gap:6px">
-        <span style="background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);border-radius:3px;padding:1px 5px;font-size:9px">HL</span>
-        OPEN ${dirText}
-      </button>
-    </div>`;
+    buttonsHtml = `
+      <div style="margin-bottom:6px;text-align:center">${orderTypeTip}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button ${dis} onclick="openTrade('${alert.symbol}', '${alert.direction}', 'MEXC')"
+          style="padding:10px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);
+            background:rgba(245,158,11,0.1);color:#f59e0b;font-family:var(--font);
+            font-size:11px;font-weight:700;letter-spacing:.05em;cursor:pointer;
+            display:flex;align-items:center;justify-content:center;gap:6px">
+          <span style="background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);border-radius:3px;padding:1px 5px;font-size:9px">MEXC</span>
+          OPEN ${dirText}
+        </button>
+        <button ${dis} onclick="openTrade('${alert.symbol}', '${alert.direction}', 'HL')"
+          style="padding:10px;border-radius:6px;border:1px solid rgba(59,130,246,0.4);
+            background:rgba(59,130,246,0.1);color:#60a5fa;font-family:var(--font);
+            font-size:11px;font-weight:700;letter-spacing:.05em;cursor:pointer;
+            display:flex;align-items:center;justify-content:center;gap:6px">
+          <span style="background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);border-radius:3px;padding:1px 5px;font-size:9px">HL</span>
+          OPEN ${dirText}
+        </button>
+      </div>`;
   }
 
   const borderColor = ts === 'HIGH_PROB' ? '#00ff88' : ts === 'STRONG' ? '#ffaa00' : '#444';
