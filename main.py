@@ -164,25 +164,6 @@ class AppState:
                 "signal_direction": sig["direction"],
             }
 
-        # Closest pair ranking
-        closest_pair = None
-        max_gates    = -1
-        max_adx_seen = -1.0
-        for ps in pair_states_out:
-            gs  = ps.get("gates_status", {})
-            tot = gs.get("gates_passing", 0)
-            adx = ps.get("adx", 0.0)
-            if 0 < tot < 4:
-                if tot > max_gates or (tot == max_gates and adx > max_adx_seen):
-                    max_gates    = tot
-                    max_adx_seen = adx
-                    closest_pair = {
-                        "symbol":        ps["symbol"],
-                        "direction":     gs.get("gates_direction", "NONE"),
-                        "gates_passing": tot,
-                        "failing_gate":  gs.get("failing_gate"),
-                    }
-
         # Market snapshot
         trend_bias     = {"strong_bull": [], "strong_bear": [], "neutral": []}
         adx_bands      = {"strong": [], "moderate": [], "weak": []}
@@ -254,7 +235,6 @@ class AppState:
             "auto_pending":          self.auto_pending,
             "pending_limit_orders":  self.pending_limit_orders,
             "trade_log":             self.trade_log,
-            "closest_pair":    closest_pair,
             "market_snapshot": market_snapshot,
         }
 
