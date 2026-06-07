@@ -53,10 +53,27 @@ class MexcClient:
         margin_usdc: float,
         leverage: int,
         entry_price: Optional[float] = None,
+        order_type: str = "MARKET",
+        limit_px: Optional[float] = None,
+        sl_price: Optional[float] = None,
     ) -> dict:
         if self._paper_mode:
-            price = entry_price or await self.get_price(symbol) or 0.0
+            price = entry_price or limit_px or await self.get_price(symbol) or 0.0
             size  = (margin_usdc * leverage) / price if price > 0 else 0.0
+            if order_type == "LIMIT" and limit_px:
+                return {
+                    "status":    "pending",
+                    "paper":     True,
+                    "exchange":  "MEXC",
+                    "order_id":  f"paper-{int(time.time())}",
+                    "symbol":    symbol,
+                    "direction": direction,
+                    "limit_px":  limit_px,
+                    "size":      size,
+                    "margin":    margin_usdc,
+                    "leverage":  leverage,
+                    "timestamp": int(time.time()),
+                }
             return {
                 "status":      "ok",
                 "paper":       True,
@@ -78,21 +95,29 @@ class MexcClient:
             if not price:
                 return {"status": "error", "msg": "Failed to fetch MEXC price"}
 
-            size = round((margin_usdc * leverage) / price, 6)
+            exec_px = limit_px if (order_type == "LIMIT" and limit_px) else price
+            size    = round((margin_usdc * leverage) / exec_px, 6)
             # MEXC side: 1=open_long, 2=close_short, 3=open_short, 4=close_long
-            side = 1 if direction.upper() == "LONG" else 3
+            side      = 1 if direction.upper() == "LONG" else 3
+            # MEXC type: 5=market, 1=limit
+            mexc_type = 1 if (order_type == "LIMIT" and limit_px) else 5
 
-            ts = str(int(time.time() * 1000))
+            ts   = str(int(time.time() * 1000))
             body = {
-                "symbol":    f"{symbol}_USDT",
-                "side":      side,
-                "openType":  1,         # 1 = isolated margin
-                "type":      5,         # 5 = market order
-                "vol":       size,
-                "leverage":  leverage,
+                "symbol":   f"{symbol}_USDT",
+                "side":     side,
+                "openType": 1,          # 1 = isolated margin
+                "type":     mexc_type,
+                "vol":      size,
+                "leverage": leverage,
             }
-            sig_params = {**body, "timestamp": ts, "api_key": self._api_key}
-            body["sign"] = self._sign(sig_params)
+            if mexc_type == 1:
+                body["price"] = exec_px
+            if sl_price:
+                body["stopLossPrice"] = sl_price
+
+            sig_params    = {**body, "timestamp": ts, "api_key": self._api_key}
+            body["sign"]  = self._sign(sig_params)
 
             resp = await self._http.post(
                 f"{MEXC_API_BASE}/api/v1/private/order/submit",
@@ -107,22 +132,61 @@ class MexcClient:
             data = resp.json()
 
             if data.get("success"):
-                return {
-                    "status":      "ok",
-                    "paper":       False,
-                    "exchange":    "MEXC",
-                    "symbol":      symbol,
-                    "direction":   direction,
-                    "entry_price": price,
-                    "size":        size,
-                    "margin":      margin_usdc,
-                    "leverage":    leverage,
-                    "timestamp":   int(time.time()),
-                    "raw":         data,
+                order_id = str(data.get("data", ""))
+                base_resp = {
+                    "status":    "ok",
+                    "paper":     False,
+                    "exchange":  "MEXC",
+                    "symbol":    symbol,
+                    "direction": direction,
+                    "size":      size,
+                    "margin":    margin_usdc,
+                    "leverage":  leverage,
+                    "timestamp": int(time.time()),
+                    "order_id":  order_id,
+                    "raw":       data,
                 }
+                if order_type == "LIMIT" and limit_px:
+                    return {**base_resp, "status": "pending", "limit_px": exec_px}
+                return {**base_resp, "entry_price": exec_px}
             return {"status": "error", "msg": data.get("message", "MEXC order rejected")}
 
         except Exception as e:
+            return {"status": "error", "msg": str(e)}
+
+    async def cancel_order(self, symbol: str, order_id: str) -> dict:
+        if self._paper_mode:
+            print(f"[MexcClient] cancel_order paper: {symbol} {order_id}")
+            return {"status": "ok", "paper": True}
+        try:
+            if not self._api_key or not self._secret_key:
+                return {"status": "error", "msg": "MEXC credentials not configured"}
+
+            ts         = str(int(time.time() * 1000))
+            params     = {
+                "symbol":    f"{symbol}_USDT",
+                "orderId":   order_id,
+                "timestamp": ts,
+                "api_key":   self._api_key,
+            }
+            params["sign"] = self._sign(params)
+
+            resp = await self._http.delete(
+                f"{MEXC_API_BASE}/api/v1/private/order/cancel",
+                params=params,
+                headers={
+                    "ApiKey":       self._api_key,
+                    "Request-Time": ts,
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("success"):
+                return {"status": "ok", "raw": data}
+            return {"status": "error", "msg": data.get("message", "MEXC cancel rejected")}
+        except Exception as e:
+            print(f"[MexcClient] cancel_order({symbol}, {order_id}) error: {e}")
             return {"status": "error", "msg": str(e)}
 
     # ── Close position ────────────────────────────────────────────────────────
