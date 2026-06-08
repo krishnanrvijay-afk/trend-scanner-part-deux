@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Trend Scanner Part Deux</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Bebas+Neue&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -24,6 +25,7 @@
       --neutral: #64748b;
       --radius: 8px;
       --font: 'SF Mono', 'Fira Code', 'Fira Mono', 'Roboto Mono', monospace;
+      --mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
     }
 
     body {
@@ -38,11 +40,10 @@
     .header {
       background: var(--surface);
       border-bottom: 1px solid var(--border);
-      padding: 12px 20px;
+      padding: 10px 20px;
       display: flex;
-      align-items: center;
-      gap: 24px;
-      flex-wrap: wrap;
+      flex-direction: column;
+      gap: 8px;
       position: sticky;
       top: 0;
       z-index: 100;
@@ -56,12 +57,10 @@
       white-space: nowrap;
     }
 
-    .header-meta {
+    .header-title-row {
       display: flex;
       align-items: center;
-      gap: 16px;
-      flex-wrap: wrap;
-      flex: 1;
+      gap: 12px;
     }
 
     .badge {
@@ -79,33 +78,63 @@
     .badge-paper { background: rgba(59,130,246,0.15); color: var(--accent); border: 1px solid rgba(59,130,246,0.3); }
     .badge-live  { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
 
-    .stat {
+    /* ── Dual-card header ────────────────────────────────────── */
+    .header-cards {
       display: flex;
-      flex-direction: column;
-      gap: 1px;
+      gap: 10px;
+      flex-wrap: wrap;
     }
-    .stat-label { font-size: 9px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
-    .stat-value { font-size: 13px; font-weight: 600; color: var(--text); }
-
-    .cap-block {
+    .hcard {
+      background: #111111;
+      border: 1px solid #333333;
+      border-radius: 6px;
+      padding: 7px 14px;
       display: flex;
-      flex-direction: column;
-      gap: 4px;
-      min-width: 140px;
-    }
-    .cap-label-row {
-      display: flex;
-      justify-content: space-between;
       align-items: center;
+      flex-wrap: wrap;
+      gap: 0;
+      flex: 1;
+      min-width: 280px;
     }
-    .cap-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-    .cap-pct   { font-size: 11px; font-weight: 700; }
-    .cap-bar-bg {
-      height: 4px;
+    .hc-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 10px;
+      white-space: nowrap;
+    }
+    .hc-item:first-child { padding-left: 0; }
+    .hc-sep {
+      width: 1px;
+      height: 14px;
+      background: #333333;
+      flex-shrink: 0;
+    }
+    .hc-label {
+      font-size: 10px;
+      color: #ffffff;
+      font-weight: 400;
+      letter-spacing: 0.03em;
+    }
+    .hc-val {
+      font-size: 10px;
+      font-weight: 700;
+      color: #ffffff;
+      font-variant-numeric: tabular-nums;
+    }
+    .hc-capbar-bg {
+      height: 3px;
+      width: 44px;
       background: var(--border);
       border-radius: 2px;
       overflow: hidden;
     }
+    .hc-capbar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s ease, background 0.4s ease;
+    }
+
     .cap-bar-fill {
       height: 100%;
       border-radius: 2px;
@@ -113,65 +142,23 @@
     }
 
     .scan-dot {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: var(--green);
       animation: pulse 2s infinite;
+      flex-shrink: 0;
     }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.3; }
     }
 
-    /* ── Pair table ──────────────────────────────────────────── */
-    .table-panel {
-      width: 100%;
+    /* ── Cards layout ────────────────────────────────────────── */
+    .scanner-cards-layout {
+      display: flex;
+      align-items: flex-start;
     }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    thead th {
-      background: var(--surface2);
-      padding: 10px 12px;
-      text-align: left;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-    }
-
-    thead th:not(:first-child) { text-align: right; }
-
-    tbody tr {
-      border-bottom: 1px solid var(--border);
-      transition: background 0.15s;
-    }
-    tbody tr:hover { background: var(--surface2); }
-
-    td {
-      padding: 11px 12px;
-      color: var(--text);
-      white-space: nowrap;
-    }
-    td:not(:first-child) { text-align: right; }
-
-    .sym { font-weight: 700; letter-spacing: 0.04em; }
-    .price-cell { font-variant-numeric: tabular-nums; }
-
-    .trend-bull  { color: var(--bull); font-weight: 700; }
-    .trend-bear  { color: var(--bear); font-weight: 700; }
-    .trend-neu   { color: var(--neutral); }
-
-    .score-high { color: var(--green); font-weight: 700; }
-    .score-med  { color: var(--yellow); }
-    .score-low  { color: var(--muted); }
 
     /* ── Alert cards ─────────────────────────────────────────── */
     .alerts-empty {
@@ -237,6 +224,12 @@
     @keyframes pending-pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.45; }
+    }
+    .sig-pulse { animation: pending-pulse 1.2s ease-in-out infinite; display: inline-block; }
+    @keyframes cancelled-flash {
+      0%   { opacity: 0; transform: scaleY(0.85); }
+      30%  { opacity: 1; transform: scaleY(1.02); }
+      100% { opacity: 1; transform: scaleY(1); }
     }
 
     .alert-header-row {
@@ -346,15 +339,6 @@
       flex-shrink: 0;
       vertical-align: middle;
     }
-    .promoted-divider td {
-      padding: 5px 12px;
-      text-align: center;
-      color: #555;
-      font-size: 10px;
-      letter-spacing: 0.14em;
-      background: #0d0f14;
-      border-bottom: 1px solid var(--border);
-    }
 
     /* ── Scrollbars ──────────────────────────────────────────── */
     ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -366,19 +350,6 @@
     .cap-yellow { background: var(--yellow); }
     .cap-red    { background: var(--red); }
 
-    /* ── Scan pulse strip ───────────────────────────────────── */
-    .scan-pulse-strip {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 5px 20px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-family: var(--font);
-      font-size: 11px;
-      white-space: nowrap;
-      overflow: hidden;
-    }
     .pulse-dot {
       width: 8px;
       height: 8px;
@@ -393,65 +364,6 @@
     @keyframes scan-flash {
       0%   { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
       100% { background: #444444; box-shadow: none; }
-    }
-
-    /* ── Gate dots ───────────────────────────────────────────── */
-    .gate-dots {
-      display: inline-flex;
-      gap: 3px;
-      align-items: center;
-      justify-content: center;
-      cursor: default;
-    }
-    .gate-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    /* ── Market snapshot panel ───────────────────────────────── */
-    .snapshot-panel {
-      border-top: 1px solid var(--border);
-      background: #111111;
-    }
-    .snapshot-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 9px 14px;
-      cursor: pointer;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: #ffffff;
-      user-select: none;
-      border-bottom: 1px solid var(--border);
-    }
-    .snapshot-header:hover { background: var(--surface2); }
-    .snapshot-chevron { font-size: 10px; color: var(--muted); }
-    .snapshot-body { padding: 12px 14px; }
-    .snapshot-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px 20px;
-    }
-    .snapshot-section { display: flex; flex-direction: column; gap: 5px; }
-    .snap-label {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: #ffffff;
-      margin-bottom: 3px;
-    }
-    .snap-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-    .snap-key {
-      font-size: 9px;
-      color: #ffffff;
-      min-width: 48px;
-      flex-shrink: 0;
     }
 
     /* ── Error toast ─────────────────────────────────────────── */
@@ -518,6 +430,78 @@
     .log-table tbody tr:last-child td { border-bottom: none; }
     .log-table tbody tr:hover { background: var(--surface2); }
 
+    /* ── Redesigned alert card (.ac) ────────────────────────── */
+    .ac {
+      background: #0d0d0d;
+      border: 1px solid #222222;
+      border-radius: 8px;
+      padding: 16px;
+      width: 360px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .ac-header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .ac-sig { display: flex; align-items: center; gap: 8px; }
+    .ac-sym { font-size: 16px; font-weight: 800; color: #ffffff; letter-spacing: 0.04em; }
+    .ac-dir-long  { padding: 2px 8px; border-radius: 4px; background: rgba(0,255,136,0.15); color: #00ff88; border: 1px solid rgba(0,255,136,0.35); font-size: 10px; font-weight: 800; letter-spacing: 0.08em; }
+    .ac-dir-short { padding: 2px 8px; border-radius: 4px; background: rgba(255,68,68,0.15);  color: #ff4444; border: 1px solid rgba(255,68,68,0.35);  font-size: 10px; font-weight: 800; letter-spacing: 0.08em; }
+    .ac-score { padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+    .ac-right { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+    .ac-ts { font-size: 10px; color: #555; margin-top: 3px; }
+
+    .ac-intrade-badge {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; border-radius: 5px; border: 1px solid;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+      margin-bottom: 8px;
+      animation: trade-pulse 2s infinite;
+    }
+    .ac-pnl-row {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px; padding: 8px 10px;
+      background: #111111; border-radius: 6px;
+    }
+    .ac-lv { display: flex; flex-direction: column; gap: 2px; }
+    .ac-lv-label { font-size: 9px; color: #ffffff; font-weight: 400; text-transform: uppercase; letter-spacing: 0.08em; }
+    .ac-lv-val   { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    .ac-section-label { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 5px; }
+    .ac-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+    .ac-detail-row  { display: flex; align-items: center; gap: 6px; }
+    .ac-detail-label { font-size: 10px; color: #ffffff; font-weight: 400; min-width: 74px; }
+    .ac-detail-val   { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    .ac-levels { display: flex; flex-direction: column; gap: 5px; }
+    .ac-level-row { display: flex; align-items: center; font-size: 11px; gap: 4px; }
+    .ac-lvl-tag   { min-width: 62px; font-weight: 700; font-size: 10px; letter-spacing: 0.03em; }
+    .ac-lvl-price { flex: 1; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .ac-lvl-pct   { color: #444; font-size: 10px; margin-right: 6px; }
+    .ac-lvl-dollar { font-weight: 700; font-size: 10px; min-width: 56px; text-align: right; }
+
+    .ac-progress-wrap {
+      position: relative; height: 6px;
+      background: #1a1a1a; border-radius: 3px; overflow: visible;
+    }
+    .ac-progress-fill { height: 100%; border-radius: 3px; max-width: 100%; transition: width 0.4s ease; }
+    .ac-progress-marker {
+      position: absolute; top: 50%; transform: translate(-50%, -50%);
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #ffffff; border: 2px solid #0d0d0d;
+      box-shadow: 0 0 5px rgba(255,255,255,0.5);
+      transition: left 0.4s ease;
+    }
+    .ac-progress-labels { display: flex; justify-content: space-between; font-size: 9px; margin-top: 5px; }
+
+    .ac-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ac-elapsed { font-size: 10px; color: #555; }
+
     /* ── Tab bar ─────────────────────────────────────────────── */
     .tab-bar {
       display: flex;
@@ -561,75 +545,571 @@
     .tab-content { display: none; }
     .tab-content.active { display: block; }
     .tab-actions {
-      margin-left: auto;
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 0;
+      padding: 6px 0 6px 8px;
+      flex-shrink: 0;
     }
     @keyframes tab-label-flash {
       0%, 100% { color: var(--muted); }
       30%, 70%  { color: #ffaa00; }
     }
     .tab-flash { animation: tab-label-flash 0.6s ease-in-out 3; }
+
+    /* ── Right side panel ────────────────────────────────────── */
+    .side-panel {
+      width: 280px;
+      flex-shrink: 0;
+      background: #0a0c10;
+      border-left: 1px solid var(--border);
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      max-height: 100vh;
+      overflow-y: auto;
+    }
+    .sp-section {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .sp-title {
+      font-size: 11px;
+      color: #ffffff;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 700;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #1a1e28;
+      margin-bottom: 2px;
+    }
+    .sp-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 2px;
+    }
+    .sp-row-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 0.04em;
+    }
+    .sp-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      margin-bottom: 4px;
+    }
+    .sp-chip {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      padding: 3px 7px;
+      border-radius: 3px;
+    }
+    .sp-adx-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 5px;
+      margin-bottom: 4px;
+    }
+    .sp-adx-dots {
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+      letter-spacing: 1px;
+    }
+    .sp-regime-badge {
+      text-align: center;
+      padding: 12px;
+      border-radius: 6px;
+    }
+    .sp-regime-text {
+      font-family: 'Bebas Neue', var(--font);
+      font-size: 28px;
+      letter-spacing: 0.06em;
+      line-height: 1;
+    }
+    .sp-session-badge {
+      text-align: center;
+      padding: 8px;
+      border-radius: 5px;
+    }
+    .sp-session-text {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+    /* ── Reference pill ─────────────────────────────────── */
+    #ref-pill-btn {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 1000;
+      background: #111111;
+      border: 1px solid #333333;
+      border-radius: 20px;
+      padding: 6px 14px;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
+    #ref-pill-btn:hover { border-color: #555555; color: #aaaaaa; }
+    #ref-pill-card {
+      position: fixed;
+      bottom: 54px;
+      right: 20px;
+      z-index: 1000;
+      width: 340px;
+      background: #0d0d0d;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 14px;
+      display: none;
+      overflow-y: auto;
+      max-height: calc(100vh - 100px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.8);
+    }
+    #ref-pill-card.open { display: block; }
+    /* ── MA Stack Overlay ────────────────────────────────── */
+    @keyframes maSlideIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    #ma-overlay { animation: maSlideIn 0.2s ease; }
+    .ma-overlay-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      padding: 10px 12px 8px;
+      background: #111111;
+      border-bottom: 1px solid #1a1a1a;
+      border-left: 3px solid #00ff88;
+      flex-shrink: 0;
+    }
+    .ma-close-btn {
+      background: none;
+      border: none;
+      color: #555555;
+      cursor: pointer;
+      font-size: 20px;
+      line-height: 1;
+      padding: 0;
+      margin-top: -2px;
+      font-family: var(--font);
+    }
+    .ma-close-btn:hover { color: #aaaaaa; }
+    .ma-tf-block {
+      padding: 8px 12px 6px;
+      border-bottom: 1px solid #111111;
+    }
+    .ma-tf-label {
+      display: flex;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .ma-row {
+      display: flex;
+      align-items: center;
+      height: 20px;
+      gap: 4px;
+      margin-bottom: 1px;
+    }
+    .ma-row-label {
+      width: 36px;
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: inherit;
+    }
+    .ma-bar-wrap {
+      flex: 1;
+      height: 3px;
+      background: #1a1a1a;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .ma-bar {
+      height: 100%;
+      border-radius: 2px;
+      opacity: 0.35;
+      transition: width 0.3s ease;
+    }
+    .ma-row-val {
+      width: 72px;
+      text-align: right;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      flex-shrink: 0;
+      color: inherit;
+    }
+    .ma-row-dir {
+      width: 14px;
+      flex-shrink: 0;
+      font-size: 11px;
+      text-align: center;
+      color: inherit;
+    }
+    .ma-stack-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 5px;
+      letter-spacing: 0.04em;
+    }
+    .ma-align-section {
+      padding: 8px 12px;
+      background: #0e0e0e;
+      border-top: 1px solid #1a1a1a;
+      flex-shrink: 0;
+    }
+    /* ── Tab filter pills ─────────────────────────────────── */
+    .tab-filter-pills {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 0 5px 8px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      flex-shrink: 1;
+      min-width: 0;
+    }
+    .tab-filter-pills::-webkit-scrollbar { display: none; }
+    .tfp {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700;
+      padding: 3px 9px; border-radius: 10px; border: 1px solid;
+      cursor: pointer; flex-shrink: 0; letter-spacing: 0.3px;
+      display: inline-flex; align-items: center; gap: 4px;
+      opacity: 0.7; transition: opacity 0.15s;
+    }
+    .tfp.active { border-color: #555 !important; opacity: 1; }
+    .tfp[data-filter="all"]       { border-color:#333; color:#fff; background:#1a1a1a; }
+    .tfp[data-filter="alerts"]    { border-color:rgba(255,170,0,0.3); color:#ffaa00; background:rgba(255,170,0,0.07); }
+    .tfp[data-filter="trades"]    { border-color:rgba(0,255,136,0.3); color:#00ff88; background:rgba(0,255,136,0.07); }
+    .tfp[data-filter="bear-high"] { border-color:rgba(255,68,68,0.3); color:#ff4444; background:rgba(255,68,68,0.08); }
+    .tfp[data-filter="strong"]    { border-color:rgba(255,170,0,0.25); color:#ffaa00; background:rgba(255,170,0,0.07); }
+    .tfp[data-filter="regular"]   { border-color:#2a2a2a; color:#fff; background:rgba(255,255,255,0.04); }
+    .tfp[data-filter="bull-high"] { border-color:rgba(0,255,136,0.3); color:#00ff88; background:rgba(0,255,136,0.08); }
+    .tfp[data-filter="neutral"]   { border-color:rgba(100,160,255,0.25); color:#66aaff; background:rgba(100,160,255,0.07); }
+    .tfp-dots { display:inline-flex; gap:2px; align-items:center; }
+    .tfp-dots span { width:5px; height:5px; border-radius:50%; display:inline-block; }
+    .tfp-dots-red   span { background:#ff4444; box-shadow:0 0 3px rgba(255,68,68,0.8); }
+    .tfp-dots-green span { background:#00ff88; box-shadow:0 0 3px rgba(0,255,136,0.8); }
+    .tfp-dots-blue  span { background:rgba(100,160,255,0.4); border:1px solid rgba(100,160,255,0.3); }
+    /* ── Card grid ────────────────────────────────────────── */
+    #card-grid {
+      flex:1; min-width:0;
+      display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:8px; align-content:start;
+    }
+    .pair-card {
+      background:#0c0c0c; border:1px solid #1a1a1a; border-radius:8px; overflow:hidden;
+    }
+    .pair-card.state-pending {
+      border-color:rgba(255,170,0,0.4);
+      box-shadow:0 0 12px rgba(255,170,0,0.08);
+    }
+    .pair-card.state-alert {
+      border-color:rgba(0,255,136,0.4);
+      box-shadow:0 0 16px rgba(0,255,136,0.12);
+    }
+    .pair-card.state-trade { border:2px solid rgba(0,255,136,0.4); }
+    .pair-card.hp-bull {
+      border-left:3px solid #00ff88;
+      box-shadow:-2px 0 12px rgba(0,255,136,0.15), inset 0 0 30px rgba(0,255,136,0.03);
+    }
+    .pair-card.hp-bear {
+      border-left:3px solid #ff4444;
+      box-shadow:-2px 0 12px rgba(255,68,68,0.15), inset 0 0 30px rgba(255,68,68,0.03);
+    }
+    .pair-card.card-strong { border-left:3px solid #ffaa00; }
+    /* ── CONF badge ───────────────────────────────────────── */
+    .conf-badge {
+      position:absolute; top:-4px; right:-20px;
+      font-size:6px; font-weight:700; padding:1px 3px; border-radius:2px;
+      background:#00ff88; color:#000; letter-spacing:0.5px;
+      animation:conf-glow 1.5s ease-in-out infinite;
+    }
+    .card-sym { position:relative; }
+    /* ── ADX tier badge ───────────────────────────────────── */
+    .adx-tier {
+      font-family:'JetBrains Mono',monospace; font-size:6px; font-weight:700;
+      padding:1px 3px; border-radius:2px; margin-left:2px; vertical-align:middle;
+    }
+    .adx-tier-high   { background:rgba(0,255,136,0.15); color:#00ff88; }
+    .adx-tier-strong { background:rgba(255,170,0,0.12); color:#ffaa00; }
+    .adx-tier-reg    { background:rgba(255,170,0,0.08); color:#ffaa00; }
+    /* ── Gate pills ──────────────────────────────────────── */
+    .gate-blocked-pill {
+      display:inline-flex; align-items:center; padding:2px 5px; border-radius:3px;
+      flex-shrink:0; background:rgba(255,68,68,0.06); border:1px solid rgba(255,68,68,0.2);
+      color:#ff4444; font-family:'JetBrains Mono',monospace; font-size:7.5px;
+      font-weight:700; letter-spacing:0.2px; white-space:nowrap;
+    }
+    .gate-pass-pill {
+      display:inline-flex; align-items:center; padding:2px 5px; border-radius:3px;
+      flex-shrink:0; background:rgba(0,255,136,0.06); border:1px solid rgba(0,255,136,0.2);
+      color:#00ff88; font-family:'JetBrains Mono',monospace; font-size:7.5px; font-weight:700;
+    }
+    /* ── Status bar (bottom of card) ─────────────────────── */
+    .card-status-bar {
+      padding:5px 8px; display:flex; align-items:center; gap:5px;
+      font-size:7.5px; font-weight:700; font-family:'JetBrains Mono',monospace;
+      letter-spacing:0.04em; color:#444;
+      background:#080808; border-top:1px solid #141414;
+    }
+    /* ── J Opportunity Map ───────────────────────────────── */
+    #j-map { padding:6px 8px 2px; display:none; border-bottom:1px solid #111; }
+    #j-map.loaded { display:block; }
+    .j-map-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; }
+    .j-map-title { font-family:'JetBrains Mono',monospace; font-size:8px; font-weight:700; color:#444; text-transform:uppercase; letter-spacing:1px; }
+    .j-map-legend { display:flex; align-items:center; gap:8px; }
+    .j-map-legend-item { display:flex; align-items:center; gap:3px; font-family:'JetBrains Mono',monospace; font-size:7px; color:#444; }
+    .j-track-wrap { margin-bottom:4px; }
+    .j-track-label { font-family:'JetBrains Mono',monospace; font-size:7px; font-weight:700; color:#666; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px; }
+    .j-track { height:26px; background:#0a0a0a; border:1px solid #111; border-radius:4px; position:relative; overflow:visible; }
+    .j-zone-os { position:absolute; left:0; top:0; bottom:0; width:20%; background:rgba(0,255,136,0.04); border-right:1px dashed rgba(0,255,136,0.2); border-radius:4px 0 0 4px; pointer-events:none; }
+    .j-zone-ob { position:absolute; right:0; top:0; bottom:0; width:20%; background:rgba(255,68,68,0.04); border-left:1px dashed rgba(255,68,68,0.2); border-radius:0 4px 4px 0; pointer-events:none; }
+    .j-relax-line-l { position:absolute; top:0; bottom:0; left:45%; width:1px; background:rgba(255,170,0,0.2); pointer-events:none; }
+    .j-relax-line-r { position:absolute; top:0; bottom:0; left:55%; width:1px; background:rgba(255,170,0,0.2); pointer-events:none; }
+    .j-dot { position:absolute; top:50%; transform:translate(-50%,-50%); width:8px; height:8px; border-radius:50%; z-index:2; cursor:default; }
+    .j-dot-label { position:absolute; font-family:'Bebas Neue',sans-serif; font-size:7px; color:#fff; white-space:nowrap; transform:translateX(-50%); pointer-events:none; }
+    .jd-os   { background:#00ff88; box-shadow:0 0 5px rgba(0,255,136,0.8); }
+    .jd-ob   { background:#ff4444; box-shadow:0 0 5px rgba(255,68,68,0.8); }
+    .jd-relax{ background:#ffaa00; box-shadow:0 0 4px rgba(255,170,0,0.7); }
+    .jd-conf { background:#00ff88; animation:conf-glow 1.5s ease-in-out infinite; }
+    .jd-mid  { background:#2a2a2a; border:1px solid #444; }
+    .j-axis  { display:flex; justify-content:space-between; padding:1px 0; }
+    .j-axis span { font-family:'JetBrains Mono',monospace; font-size:6px; color:#2a2a2a; }
+    @keyframes conf-glow { 0%,100%{box-shadow:0 0 6px rgba(0,255,136,0.8);}50%{box-shadow:0 0 16px rgba(0,255,136,0.9);} }
+    /* ── Layout Card Modal ───────────────────────────────── */
+    #layout-overlay {
+      position:fixed; inset:0; z-index:2000;
+      background:rgba(0,0,0,0.8); backdrop-filter:blur(3px);
+      display:flex; align-items:center; justify-content:center; padding:20px;
+    }
+    #layout-overlay.hidden { display:none; }
+    .layout-card {
+      background:#0d0d0d; border:1px solid #222; border-radius:10px;
+      width:100%; max-width:480px; max-height:88vh; overflow-y:auto;
+      display:flex; flex-direction:column; scrollbar-width:none;
+    }
+    .layout-card::-webkit-scrollbar { display:none; }
+    .lc-header { padding:14px 16px; border-bottom:1px solid #1a1a1a; }
+    .lc-sym-row { display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap; }
+    .lc-sym-name { font-family:'Bebas Neue',sans-serif; font-size:28px; color:#fff; line-height:1; }
+    .lc-close { background:none; border:none; color:#555; font-size:22px; cursor:pointer; margin-left:auto; padding:0; line-height:1; }
+    .lc-close:hover { color:#aaa; }
+    .lc-price-row { display:flex; align-items:baseline; gap:8px; }
+    .lc-price { font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; color:#fff; }
+    .lc-section { padding:12px 16px; border-bottom:1px solid #111; }
+    .lc-section-title { font-size:8px; font-weight:700; color:#555; text-transform:uppercase; letter-spacing:1.2px; margin-bottom:10px; }
+    .lc-gate-row { margin-bottom:10px; }
+    .lc-gate-header { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+    .lc-gate-letter { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; color:#fff; width:12px; flex-shrink:0; }
+    .lc-gate-name { font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; color:#aaa; flex:1; }
+    .lc-gate-bar-track { height:4px; background:#1a1a1a; border-radius:2px; position:relative; margin:4px 0; overflow:visible; }
+    .lc-gate-bar-fill { height:100%; border-radius:2px; transition:width 0.3s; }
+    .lc-gate-bar-marker { position:absolute; top:-3px; bottom:-3px; width:2px; background:rgba(255,255,255,0.6); border-radius:1px; }
+    .lc-gate-detail { font-family:'JetBrains Mono',monospace; font-size:8px; color:#444; margin-top:2px; }
+    .lc-history-row { display:flex; align-items:center; gap:5px; padding:5px 0; border-bottom:1px solid #0f0f0f; font-family:'JetBrains Mono',monospace; font-size:8px; color:#555; }
+    .lc-history-chip { padding:1px 4px; border-radius:3px; font-size:7px; font-weight:700; letter-spacing:0.2px; }
+    .lc-chip-pass { background:rgba(0,255,136,0.12); color:#00ff88; }
+    .lc-chip-fail { background:rgba(255,68,68,0.1); color:#ff4444; }
+    .lc-ma-strip { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+    .lc-ma-pill { display:flex; flex-direction:column; align-items:center; background:#111; border:1px solid #1e1e1e; border-radius:4px; padding:4px 10px; min-width:52px; }
+    .lc-trade-row { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid #0f0f0f; font-family:'JetBrains Mono',monospace; font-size:8px; color:#555; }
+    .lc-btn-row { display:flex; gap:8px; padding:12px 16px; }
+    .lc-btn { flex:1; padding:10px; border-radius:6px; border:none; font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; letter-spacing:0.08em; cursor:pointer; transition:opacity 0.15s; }
+    .lc-btn-hl   { background:#00ff88; color:#000; }
+    .lc-btn-mexc { background:#1a6ef5; color:#fff; }
+    .lc-btn:active { opacity:0.8; }
+    .card-row1 {
+      display:flex; align-items:flex-start; justify-content:space-between; padding:7px 8px 2px; gap:4px;
+    }
+    .card-identity {
+      display:flex; align-items:center; gap:3px; flex-wrap:nowrap; overflow:hidden; min-width:0;
+    }
+    .card-sym { font-family:'Bebas Neue',sans-serif; font-size:19px; color:#fff; line-height:1; flex-shrink:0; }
+    .card-price-col { text-align:right; flex-shrink:0; }
+    .card-price { font-family:'JetBrains Mono',monospace; font-size:14px; font-weight:700; color:#fff; display:block; }
+    .card-row2, .card-row3 {
+      display:flex; align-items:center; gap:3px; padding:2px 8px; overflow-x:auto; scrollbar-width:none;
+    }
+    .card-row2::-webkit-scrollbar, .card-row3::-webkit-scrollbar { display:none; }
+    .card-pill {
+      display:flex; flex-direction:column; align-items:center;
+      background:#111; border:1px solid #1e1e1e; border-radius:4px;
+      padding:3px 5px; flex-shrink:0; gap:1px; min-width:28px;
+    }
+    .card-pill-label {
+      font-size:7px; font-weight:700; color:#fff; text-transform:uppercase;
+      letter-spacing:0.4px; line-height:1; white-space:nowrap;
+    }
+    .card-pill-val { font-size:10px; font-weight:700; font-family:'JetBrains Mono',monospace; line-height:1; }
+    .card-row4 { padding:4px 8px 6px; }
+    .card-depth-bar { height:2px; border-radius:1px; overflow:hidden; background:rgba(255,68,68,0.4); margin-bottom:4px; }
+    .card-depth-bar-fill { height:100%; background:rgba(0,255,136,0.7); border-radius:1px; }
+    .card-depth-cols { display:flex; justify-content:space-between; align-items:flex-start; }
+    .card-signal-badge {
+      padding:5px 8px; display:flex; align-items:center; gap:5px;
+      font-size:10px; font-weight:700; font-family:'JetBrains Mono',monospace; letter-spacing:0.04em;
+    }
+    /* ── Market strip (mobile compact summary, hidden on >900px) ── */
+    #market-strip {
+      display: none; gap: 5px; padding: 5px 8px;
+      overflow-x: auto; scrollbar-width: none;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      flex-wrap: nowrap; align-items: center;
+    }
+    #market-strip::-webkit-scrollbar { display: none; }
+    .ms-chip {
+      display: inline-flex; align-items: center;
+      padding: 3px 8px; border-radius: 10px; border: 1px solid;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 700; white-space: nowrap; flex-shrink: 0;
+    }
+    .ms-sep { color: #333; margin: 0 3px; font-size: 11px; }
+    @media (max-width: 900px) {
+      .side-panel { display: none !important; }
+      #market-strip { display: flex; }
+    }
   </style>
 </head>
 <body>
 
 <!-- Header -->
 <header class="header">
-  <div class="header-title">TREND SCANNER Ⅱ</div>
-  <div class="header-meta">
+  <!-- Title row -->
+  <div class="header-title-row">
+    <div class="header-title">TREND SCANNER Ⅱ</div>
     <span class="badge {{ 'badge-paper' if paper_mode else 'badge-live' }}">
       {{ '● PAPER' if paper_mode else '⚡ LIVE' }}
     </span>
-
-    <div class="stat">
-      <span class="stat-label">Scan every</span>
-      <span class="stat-value" id="scan-interval">{{ scan_interval }}s</span>
-    </div>
-
-    <div class="stat">
-      <span class="stat-label">Margin deployed</span>
-      <span class="stat-value" id="margin-deployed">— / {{ margin_cap }} USDC</span>
-    </div>
-
-    <div class="stat">
-      <span class="stat-label">Trades</span>
-      <span class="stat-value" id="trade-count">0</span>
-    </div>
-
-    <div class="cap-block">
-      <div class="cap-label-row">
-        <span class="cap-label">Cap used</span>
-        <span class="cap-pct" id="cap-pct-label">0%</span>
+    <span id="circuit-breaker-badge" style="
+      display:none;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;
+      background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.45);
+      color:#ff4444;font-size:11px;font-weight:700;letter-spacing:.06em;
+      animation:pending-pulse 1.2s infinite
+    ">⛔ CIRCUIT BREAKER ACTIVE</span>
+    <button id="circuit-breaker-reset" onclick="resetCircuitBreaker()" style="
+      display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:4px;
+      background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);
+      color:#ff4444;font-size:10px;font-weight:700;letter-spacing:.06em;
+      cursor:pointer;font-family:var(--font)
+    ">↺ RESET</button>
+    <span id="hc-losses-in-row" style="
+      display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:4px;
+      background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.3);
+      color:#ffaa00;font-size:10px;font-weight:600;letter-spacing:.04em
+    "></span>
+    <span id="daily-limit-badge" style="
+      display:none;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;
+      background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.45);
+      color:#ff4444;font-size:11px;font-weight:700;letter-spacing:.06em;
+      animation:pending-pulse 1.2s infinite
+    ">🚫 DAILY LIMIT HIT</span>
+    <button id="reset-day-btn" onclick="resetDay()" style="
+      display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:4px;
+      background:rgba(255,170,0,0.1);border:1px solid rgba(255,170,0,0.35);
+      color:#ffaa00;font-size:10px;font-weight:700;letter-spacing:.06em;
+      cursor:pointer;font-family:var(--font)
+    ">↺ RESET DAY</button>
+  </div>
+  <!-- Dual info cards -->
+  <div class="header-cards">
+    <!-- LEFT: Scanner Status -->
+    <div class="hcard">
+      <div class="hc-item">
+        <span class="hc-label">SCAN EVERY</span>
+        <span class="hc-val" style="color:#00ff88">{{ scan_interval }}s</span>
       </div>
-      <div class="cap-bar-bg">
-        <div class="cap-bar-fill cap-green" id="cap-bar" style="width:0%"></div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label">MARGIN</span>
+        <span class="hc-val" style="color:#ffffff">$2,000.00</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label">TRADES</span>
+        <span class="hc-val" id="hc-trades">0 opened</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label">DAY P&amp;L</span>
+        <span class="hc-val" id="hc-daily-pnl" style="color:#888">—</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="scan-dot" id="scan-dot"></span>
+        <span class="hc-val" style="color:#ffaa00" id="hc-scan-ago">scanning…</span>
+      </div>
+      <span class="hc-sep"></span>
+      <div class="hc-item">
+        <span class="hc-label" id="hc-deploy-time" style="color:#555"></span>
       </div>
     </div>
-
-    <div class="scan-dot" id="scan-dot"></div>
-    <span style="font-size:10px;color:var(--muted);" id="scan-ago">scanning…</span>
-    <span style="font-size:10px;color:var(--muted);margin-left:14px;letter-spacing:.04em;" id="deploy-time"></span>
+    <!-- RIGHT: Market Snapshot summary (always-visible) -->
+    <div class="hcard" style="flex-direction:column;align-items:flex-start;gap:6px;padding:7px 14px">
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0">
+        <div class="hc-item" style="padding-left:0">
+          <span class="hc-label">TREND</span>
+          <span class="hc-val" id="hc-trend-val">—</span>
+        </div>
+        <span class="hc-sep"></span>
+        <div class="hc-item">
+          <span class="hc-label">BTC</span>
+          <span class="hc-val" id="hc-btc-regime" style="color:#888">—</span>
+        </div>
+        <span class="hc-sep"></span>
+        <div class="hc-item">
+          <span class="hc-label">ADX&gt;50</span>
+          <span class="hc-val" id="hc-adx-strong">—</span>
+        </div>
+        <span class="hc-sep"></span>
+        <div class="hc-item">
+          <span class="hc-label">SIGNALS</span>
+          <span class="hc-val" style="color:#00ff88" id="hc-signals">0</span>
+        </div>
+      </div>
+      <div style="border-top:1px solid #1a1a1a;margin-top:6px;padding-top:6px;display:flex;align-items:center;gap:5px;flex-wrap:nowrap;overflow:hidden">
+        <span class="pulse-dot" id="pulse-dot" style="width:6px;height:6px;background:#333;flex-shrink:0"></span>
+        <span style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;flex-shrink:0">SCAN</span>
+        <span id="pulse-scan-num" style="color:#ffaa00;font-weight:700;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">—</span>
+        <span style="color:#333;flex-shrink:0">·</span>
+        <span id="pulse-ago" style="color:#ffaa00;font-weight:700;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">—</span>
+        <span style="color:#333;flex-shrink:0">·</span>
+        <span style="color:#ffffff;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">12 pairs</span>
+        <span style="color:#333;flex-shrink:0">·</span>
+        <span id="pulse-signals" style="color:#00ff88;font-weight:700;font-size:10px;font-family:'JetBrains Mono',monospace;flex-shrink:0">—</span>
+        <span style="font-size:10px;color:#555;font-family:'JetBrains Mono',monospace">signals</span>
+      </div>
+    </div>
   </div>
 </header>
 
-<!-- Scan pulse strip -->
-<div class="scan-pulse-strip">
-  <span class="pulse-dot" id="pulse-dot"></span>
-  <span>
-    <span style="color:#ffffff">SCAN</span>&nbsp;<span id="pulse-scan-num" style="color:#00ff88;font-weight:bold">—</span>
-    <span style="color:#444444;margin:0 5px">·</span>
-    <span id="pulse-ago" style="color:#ffaa00;font-weight:bold">—</span>
-    <span style="color:#444444;margin:0 5px">·</span>
-    <span style="color:#ffffff">12 pairs</span>
-    <span style="color:#444444;margin:0 5px">·</span>
-    <span id="pulse-signals" style="color:#00ff88;font-weight:bold">—</span>&nbsp;<span style="color:#ffffff">signals</span>
-    <span style="color:#444444;margin:0 5px">·</span>
-    <span id="pulse-closest"><span style="color:#444444">scanning…</span></span>
-  </span>
-</div>
+<!-- Market strip: compact snapshot row shown on <900px screens -->
+<div id="market-strip"></div>
 
 <!-- Tab bar -->
 <div class="tab-bar">
@@ -639,43 +1119,67 @@
     <span id="alert-badge" class="tab-badge" style="display:none"></span>
   </button>
   <button id="tab-btn-tradelog" class="tab-btn"        onclick="switchTab('tradelog')">TRADE LOG</button>
+  <!-- Filter pills — right-aligned in tab row -->
+  <div class="tab-filter-pills" id="tab-filter-pills">
+    <button class="tfp active" data-filter="all"       onclick="setFilter('all')">ALL <span id="filter-count">12</span></button>
+    <button class="tfp"        data-filter="alerts"    onclick="setFilter('alerts')">⏳ ALERTS</button>
+    <button class="tfp"        data-filter="trades"    onclick="setFilter('trades')">● TRADES</button>
+    <button class="tfp"        data-filter="bear-high" onclick="setFilter('bear-high')"><span class="tfp-dots tfp-dots-red"><span></span><span></span><span></span></span>HIGH BEAR</button>
+    <button class="tfp"        data-filter="strong"    onclick="setFilter('strong')"><span class="tfp-dots"><span style="background:#ffaa00"></span><span style="background:#ffaa00"></span><span style="background:rgba(255,170,0,0.2);border:1px solid rgba(255,170,0,0.3)"></span></span>STRONG</button>
+    <button class="tfp"        data-filter="regular"   onclick="setFilter('regular')"><span class="tfp-dots"><span style="background:#fff"></span><span style="background:rgba(255,255,255,0.1);border:1px solid #333"></span><span style="background:rgba(255,255,255,0.1);border:1px solid #333"></span></span>REGULAR</button>
+    <button class="tfp"        data-filter="bull-high" onclick="setFilter('bull-high')"><span class="tfp-dots tfp-dots-green"><span></span><span></span><span></span></span>HIGH BULL</button>
+    <button class="tfp"        data-filter="neutral"   onclick="setFilter('neutral')"><span class="tfp-dots tfp-dots-blue"><span></span><span></span><span></span></span>NEUTRAL</button>
+  </div>
   <div class="tab-actions" id="tradelog-tab-actions" style="display:none">
     <a href="/api/tradelog/csv" class="pill pill-download" style="text-decoration:none;padding:5px 12px;font-size:10px">↓ CSV</a>
     <button id="clear-log-btn" class="pill pill-clear" style="padding:5px 12px;font-size:10px" onclick="clearTradeLog()">✕ CLEAR LOG</button>
+  </div>
+  <div class="tab-actions" id="alerts-tab-actions" style="display:none">
+    <button id="clear-stale-btn" class="pill pill-clear" style="padding:5px 12px;font-size:10px" onclick="clearStaleAlerts()">✕ CLEAR STALE</button>
   </div>
 </div>
 
 <!-- TAB 1: SCANNER -->
 <div id="tab-scanner" class="tab-content active">
-  <div class="table-panel">
-    <table>
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          <th>Trend</th>
-          <th>Price</th>
-          <th>ADX</th>
-          <th>J</th>
-          <th>B%</th>
-          <th>S%</th>
-          <th style="text-align:center">GATES</th>
-          <th>Signal</th>
-        </tr>
-      </thead>
-      <tbody id="pair-tbody">
-        <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:30px;">Connecting to Hyperliquid…</td></tr>
-      </tbody>
-    </table>
+  <div id="j-map"></div>
+  <div class="scanner-cards-layout">
+    <!-- Card grid (always shown, all screen sizes) -->
+    <div id="card-grid"></div>
 
-    <!-- Market Snapshot Panel -->
-    <div class="snapshot-panel" id="snapshot-panel">
-      <div class="snapshot-header" onclick="toggleSnapshot()">
-        <span>MARKET SNAPSHOT</span>
-        <span class="snapshot-chevron" id="snapshot-chevron">▶</span>
+    <!-- Snapshot side panel (hidden on <900px via @media) -->
+    <div class="side-panel" id="side-panel">
+      <div class="sp-section">
+        <div class="sp-title">Trend Bias</div>
+        <div id="sp-trend-bias"><span style="color:#333;font-size:10px">scanning…</span></div>
       </div>
-      <div class="snapshot-body" id="snapshot-body" style="display:none">
-        <div class="snapshot-grid" id="snapshot-content"></div>
+      <div class="sp-section">
+        <div class="sp-title">ADX Strength</div>
+        <div id="sp-adx-strength"><span style="color:#333;font-size:10px">—</span></div>
       </div>
+      <div class="sp-section">
+        <div class="sp-title">Momentum J</div>
+        <div id="sp-momentum"><span style="color:#333;font-size:10px">—</span></div>
+      </div>
+      <div class="sp-section">
+        <div class="sp-title">BTC Regime</div>
+        <div id="sp-btc-regime"><span style="color:#333;font-size:10px">—</span></div>
+      </div>
+      <div class="sp-section">
+        <div class="sp-title">Session</div>
+        <div id="sp-session"><span style="color:#333;font-size:10px">—</span></div>
+      </div>
+    </div>
+
+    <!-- MA Stack Overlay (replaces side panel on symbol tap) -->
+    <div id="ma-overlay" style="display:none;width:280px;flex-shrink:0;background:#0a0c10;border-left:1px solid var(--border);position:sticky;top:0;max-height:100vh;overflow-y:auto;flex-direction:column">
+      <div class="ma-overlay-header">
+        <div>
+          <span class="ma-overlay-sym" style="font-family:'Bebas Neue',sans-serif;font-size:22px;color:#00ff88;line-height:1;display:block"></span>
+          <span style="font-size:9px;color:#555555;text-transform:uppercase;letter-spacing:1.5px">MA STACK ANALYSIS</span>
+        </div>
+        <button class="ma-close-btn" onclick="hideMAOverlay()">×</button>
+      </div>
+      <div class="ma-overlay-content" style="flex:1;overflow-y:auto"></div>
     </div>
   </div>
 </div>
@@ -684,7 +1188,7 @@
 <div id="tab-alerts" class="tab-content">
   <div id="alerts-container">
     <div class="alerts-empty">
-      Scanning every 10s.<br>Alerts appear here when TC conditions are met twice.
+      Scanning every 20s.<br>Alerts appear here when all 4 conditions pass twice.
     </div>
   </div>
 </div>
@@ -696,8 +1200,130 @@
   </div>
 </div>
 
+<!-- Layout Card Modal (CHANGE 8) -->
+<div id="layout-overlay" class="hidden" onclick="closeLayoutCard(event)"></div>
+
 <!-- Error toast -->
 <div id="toast"></div>
+
+<!-- Reference pill -->
+<button id="ref-pill-btn" onclick="toggleRefPill()">REFERENCE</button>
+<div id="ref-pill-card">
+  <!-- Card header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <span style="font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:2px;color:#555555">SIGNAL TIER REFERENCE</span>
+    <button onclick="toggleRefPill()" style="background:none;border:none;color:#555555;cursor:pointer;font-size:18px;line-height:1;padding:0;font-family:var(--font)">&#215;</button>
+  </div>
+  <div style="height:1px;background:#222222;margin-bottom:10px"></div>
+
+  <!-- S1: Trend Classification -->
+  <div style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px">TREND CLASSIFICATION</div>
+  <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:9px">
+    <div style="display:flex;gap:6px">
+      <span style="font-size:9px;color:#555555;min-width:58px;flex-shrink:0;padding-top:1px;letter-spacing:.04em">MA STACK</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">price &gt; ma10 &gt; ma30 &gt; ma60 = <span style="color:#fff;font-weight:700">BULL</span> &nbsp;·&nbsp; price &lt; ma10 &lt; ma30 &lt; ma60 = <span style="color:#fff;font-weight:700">BEAR</span> &nbsp;·&nbsp; else = <span style="color:#fff;font-weight:700">NEUTRAL</span></span>
+    </div>
+    <div style="display:flex;gap:6px">
+      <span style="font-size:9px;color:#555555;min-width:58px;flex-shrink:0;padding-top:1px;letter-spacing:.04em">STRENGTH</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">ADX &#8805;60 = <span style="color:#fff;font-weight:700">HIGH PROB</span> &nbsp;·&nbsp; 40&#8211;59 = <span style="color:#fff;font-weight:700">STRONG</span> &nbsp;·&nbsp; 25&#8211;39 = <span style="color:#fff;font-weight:700">REGULAR</span> &nbsp;·&nbsp; &lt;25 = <span style="color:#fff;font-weight:700">NEUTRAL</span></span>
+    </div>
+  </div>
+  <div style="height:1px;background:#1a1a1a;margin-bottom:9px"></div>
+
+  <!-- S2: Tiers -->
+  <div style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px">TIERS &middot; ORDER &middot; LEVERAGE &middot; TARGETS</div>
+  <!-- HIGH BEAR -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px;color:#ff4444;text-shadow:0 0 4px rgba(255,68,68,0.7)">&#9679;&#9679;&#9679;</div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ff4444">HIGH BEAR</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX &#8805;60</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">MKT 25x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2 &middot; TP3</div>
+  </div>
+  <!-- STRONG BEAR -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffaa00">&#9679;&#9679;</span><span style="color:#2a2a2a">&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffaa00">STRONG BEAR</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 40&#8211;59</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 15x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2</div>
+  </div>
+  <!-- REGULAR BEAR -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffffff">&#9679;</span><span style="color:#2a2a2a">&#9679;&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff">REGULAR BEAR</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 25&#8211;39</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 10x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1</div>
+  </div>
+  <!-- divider -->
+  <div style="height:1px;background:#1a1a1a;margin:4px 0"></div>
+  <!-- HIGH BULL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px;color:#00ff88;text-shadow:0 0 4px rgba(0,255,136,0.7)">&#9679;&#9679;&#9679;</div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#00ff88">HIGH BULL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX &#8805;60</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">MKT 25x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2 &middot; TP3</div>
+  </div>
+  <!-- STRONG BULL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffaa00">&#9679;&#9679;</span><span style="color:#2a2a2a">&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffaa00">STRONG BULL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 40&#8211;59</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 15x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1 &middot; TP2</div>
+  </div>
+  <!-- REGULAR BULL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px"><span style="color:#ffffff">&#9679;</span><span style="color:#2a2a2a">&#9679;&#9679;</span></div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff">REGULAR BULL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX 25&#8211;39</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#ffaa00">LMT 10x</div>
+    <div style="font-size:9px;font-weight:700;color:#00ff88">TP1</div>
+  </div>
+  <!-- divider -->
+  <div style="height:1px;background:#1a1a1a;margin:4px 0"></div>
+  <!-- NEUTRAL -->
+  <div style="display:flex;align-items:center;height:22px">
+    <div style="width:26px;flex-shrink:0;font-size:9px;letter-spacing:1px;color:#66aaff;opacity:0.45">&#9679;&#9679;&#9679;</div>
+    <div style="width:100px;flex-shrink:0;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#66aaff">NEUTRAL</div>
+    <div style="width:60px;flex-shrink:0;font-size:9px;color:#555555">ADX &lt;25</div>
+    <div style="width:56px;flex-shrink:0;font-size:9px;font-weight:700;color:#555555">NO SIG</div>
+    <div style="font-size:9px;font-weight:700;color:#555555">—</div>
+  </div>
+
+  <div style="height:1px;background:#1a1a1a;margin:8px 0"></div>
+
+  <!-- S3: Gate Conditions -->
+  <div style="font-size:9px;font-weight:700;color:#ffffff;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px">GATE CONDITIONS (ALL 4 MUST PASS)</div>
+  <div style="display:flex;flex-direction:column;gap:5px">
+    <!-- T -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">T</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">TREND &nbsp; MA stack must be <span style="color:#00ff88;font-weight:700">BULL</span> or <span style="color:#ff4444;font-weight:700">BEAR</span></span>
+    </div>
+    <!-- A -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">A</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">ADX &nbsp; &#8805;<span style="color:#ffaa00;font-weight:700">25</span> minimum &nbsp;·&nbsp; overrides: NEAR <span style="color:#ffaa00;font-weight:700">42</span> &nbsp; SUI <span style="color:#ffaa00;font-weight:700">40</span></span>
+    </div>
+    <!-- D -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">D</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">DEPTH &nbsp; ask% &#8805;<span style="color:#ffaa00;font-weight:700">60%</span> SHORT &nbsp;·&nbsp; bid% &#8805;<span style="color:#ffaa00;font-weight:700">60%</span> LONG</span>
+    </div>
+    <!-- J -->
+    <div style="display:flex;gap:0;align-items:flex-start">
+      <span style="font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#ffffff;width:14px;flex-shrink:0">J</span>
+      <span style="font-size:9px;color:#444444;margin:0 6px;padding-top:1px">—</span>
+      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:#555555;line-height:1.5">KDJ J on 1h &nbsp;·&nbsp; ADX&#8805;50: J&gt;<span style="color:#ffaa00;font-weight:700">55</span> or J&lt;<span style="color:#ffaa00;font-weight:700">45</span> &nbsp;·&nbsp; ADX&lt;50: J&gt;<span style="color:#ff4444;font-weight:700">80</span> SHORT &nbsp; J&lt;<span style="color:#00ff88;font-weight:700">20</span> LONG</span>
+    </div>
+  </div>
+</div>
 
 <script src="/static/dashboard.js"></script>
 </body>

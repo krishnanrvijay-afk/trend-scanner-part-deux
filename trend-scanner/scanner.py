@@ -1,81 +1,121 @@
 import logging
 import time
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional
 import numpy as np
 import pandas as pd
 
-# ── Startup: validate pandas-ta availability ──────────────────────────────────
-try:
-    import pandas_ta as _pta
-    logging.getLogger("scanner").info(
-        "[STARTUP] pandas-ta version %s loaded", getattr(_pta, "__version__", "unknown")
-    )
-except ImportError:
-    logging.getLogger("scanner").critical(
-        "[STARTUP CRITICAL] pandas-ta not available — indicator calculations will fail"
-    )
-
 from config import (
-    PAIRS, ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
-    DEPTH_GATE_PCT,
-    MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE,
-    COOLDOWN_MINUTES, PAPER_MODE,
-    PROMOTED_SLOTS, ROTATION_WINDOW_MINUTES,
-    UNIVERSE_VOLUME_MIN_USD, UNIVERSE_OI_MIN_USD,
-    UNIVERSE_FUNDING_MIN_ABS, UNIVERSE_VOLUME_FALLBACK_MULTIPLIER,
+    PAIRS, TC_ADX_MIN, DEPTH_GATE_PCT, PAIR_ADX_OVERRIDES,
+    SL_PCT, SL_HALF_PCT, TP1_MULTIPLIER, TP2_MULTIPLIER, TP3_MULTIPLIER,
+    LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
+    COOLDOWN_SECONDS, CONSECUTIVE_LOSS_STOP,
+    MARGIN_PER_TRADE,
+    PAPER_MODE,
+    BTC_REGIME_FILTER_ENABLED,
+    STRONG_CANCEL_CYCLES, REGULAR_CANCEL_CYCLES,
 )
 from hl_client import HLClient
 
 logger = logging.getLogger("scanner")
 
-# ── Consecutive-scan confirmation state ──────────────────────────────────────
-_prev_scores: dict[str, int] = {}
-_cooldowns: dict[str, float] = {}
-_pending: dict[str, dict] = {}
-_confirmed_at: dict[str, float] = {}
-CONFIRMED_SHOW_SECONDS = 30
+# ── Module-level state ────────────────────────────────────────────────────────
+_last_result:     dict[str, bool]  = {}   # key → last scan result (True/False)
+_pending:         dict[str, dict]  = {}   # PENDING (first scan passed)
+_confirmed_at:    dict[str, float] = {}   # key → timestamp of ALERT confirmation
+_cooldowns:       dict[str, float] = {}   # key → expiry timestamp
+_btc_regime:      str              = "Neutral"  # updated each BTC scan
+_last_known_good: dict[str, dict]  = {}   # symbol → last successful scan result
+_candle_cache:    dict[str, dict]  = {}   # "{symbol}_1h" → {candles, hour, last_ts}
+_funding_cache:   dict[str, Optional[float]] = {}  # symbol → latest funding rate
+_scan_history:    dict[str, list]  = {}   # symbol → last 3 scan results
+_cycle_stats:     dict = {"blocked_shorts": 0, "blocked_longs": 0, "allowed_longs": 0, "allowed_shorts": 0}
 
-# ── Universe scanner state ─────────────────────────────────────────────────────
-_promoted_pairs: dict[str, dict] = {}   # symbol → slot entry
-_universe_state: dict = {
-    "last_scan_at": None,
-    "total_pairs_scanned": 0,
-    "pairs_surviving_filter": 0,
-    "last_candidates": [],
-}
+CONFIRMED_SHOW_SECONDS = 30  # show ALERT state in signal column for this long
 
+_overrides_str = " ".join(f"{k}:{v}" for k, v in PAIR_ADX_OVERRIDES.items()) or "none"
 logger.info(
-    "[CONFIG] ALERT_THRESHOLD=%s | TC_MIN=%s | ADX_MIN=%s"
-    " | DEPTH=%s%% | J_SHORT>80(ADX<50)/>55or<45(ADX>=50) | J_LONG<20(ADX<50)/<45or>55(ADX>=50)"
-    " | P4_SHORT=rsi<40_rising(CAP)/rsi>60_falling(STD) P6_SHORT=vol>1.2x(CAP)/vol>1.5x(STD)"
-    " | MARGIN_CAP=%s | DEFAULT_MARGIN=%s | LEVERAGE=%sx | PAPER_MODE=%s",
-    ALERT_THRESHOLD, TC_MIN_SCORE, TC_ADX_MIN,
-    DEPTH_GATE_PCT,
-    MARGIN_HARD_CAP_USDC, DEFAULT_MARGIN_USDC, DEFAULT_LEVERAGE, PAPER_MODE,
+    "[CONFIG] MARGIN=%d | SL=3%%(FIXED) | SL_HALF=0.6%% | TP=1.5R/2.5R/4.0R(HIGH)/2.5R(STRONG)/1.5R(REG)"
+    " | COOLDOWN=60min | CIRCUIT_BREAKER=3 | DAILY_LOSS=-500 | LEVERAGE=%dx/%dx/%dx"
+    " | WALLS=enabled | CANDLE_CACHE=1h | RATE_LIMIT=stagger_0.3s_backoff_2s"
+    " | EXCHANGE=HL+MEXC | BTC_REGIME=enabled | ADX_OVERRIDES=%s | PAPER=%s",
+    MARGIN_PER_TRADE,
+    LEVERAGE_TIER1, LEVERAGE_TIER2, LEVERAGE_TIER3,
+    _overrides_str, PAPER_MODE,
 )
 
+
+# ── BTC regime ────────────────────────────────────────────────────────────────
+
+def get_btc_regime() -> str:
+    """Return latest BTC trend regime — updated each time BTC is scanned."""
+    return _btc_regime
+
+
+def get_scan_history(symbol: str) -> list:
+    """Return last 3 scan results for a symbol."""
+    return list(_scan_history.get(symbol, []))
+
+
+def _build_gates_detail(
+    trend: str,
+    adx_1h: float,
+    bid_pct: float,
+    ask_pct: float,
+    j_1h: float,
+    gates_direction: str,
+) -> dict:
+    """Build gates detail object for layout card display."""
+    is_long   = gates_direction != "SHORT"
+    depth_pct = bid_pct if is_long else ask_pct
+    j_std     = 20 if is_long else 80
+    j_relax   = 45 if is_long else 55
+    j_tier    = "relaxed" if adx_1h >= 50 else "standard"
+    j_tier_reason = (
+        f"ADX {adx_1h:.1f} \u2265 50 \u2014 relaxed tier applies"
+        if adx_1h >= 50
+        else f"ADX {adx_1h:.1f} below 50 \u2014 standard tier applies"
+    )
+    return {
+        "trend_value":          trend,
+        "adx_value":            round(adx_1h, 1),
+        "depth_pct":            round(depth_pct, 1),
+        "j_value":              round(j_1h, 1),
+        "j_threshold_standard": j_std,
+        "j_threshold_relaxed":  j_relax,
+        "j_tier":               j_tier,
+        "j_tier_reason":        j_tier_reason,
+    }
+
+
+# ── Cooldown helpers ──────────────────────────────────────────────────────────
 
 def _in_cooldown(key: str) -> bool:
     return time.time() < _cooldowns.get(key, 0)
 
 
 def _set_cooldown(key: str, reason: str = "UNKNOWN"):
-    duration = int(COOLDOWN_MINUTES * 60)
-    _cooldowns[key] = time.time() + duration
-    logger.info("[COOLDOWN] %s cooldown started — reason=%s duration=%ss", key, reason, duration)
+    _cooldowns[key] = time.time() + COOLDOWN_SECONDS
+    logger.info("[COOLDOWN] %s started reason=%s duration=%ds", key, reason, COOLDOWN_SECONDS)
 
 
-def _get_signal_state(symbol: str) -> str:
-    """Returns per-symbol signal state for the SIGNAL column: none | pending | confirmed."""
+# ── Signal-state helpers ──────────────────────────────────────────────────────
+
+def get_pair_signal_info(symbol: str) -> dict:
+    """Return scanner-level signal state.
+    Priority: ALERT (recently confirmed) → PENDING (first scan passed) → SCANNING.
+    """
+    key_long  = f"{symbol}LONG"
+    key_short = f"{symbol}SHORT"
     now = time.time()
-    for direction in ("LONG", "SHORT"):
-        key = f"{symbol}{direction}"
-        if key in _pending:
-            return "pending"
+    for key, direction in [(key_long, "LONG"), (key_short, "SHORT")]:
         if key in _confirmed_at and now - _confirmed_at[key] < CONFIRMED_SHOW_SECONDS:
-            return "confirmed"
-    return "none"
+            return {"signal_state": "ALERT", "direction": direction}
+    for key, direction in [(key_long, "LONG"), (key_short, "SHORT")]:
+        if key in _pending:
+            return {"signal_state": "PENDING", "direction": direction}
+    return {"signal_state": "SCANNING", "direction": None}
 
 
 def get_pending() -> list[dict]:
@@ -83,46 +123,43 @@ def get_pending() -> list[dict]:
 
 
 def get_cooldown_remaining(symbol: str, direction: str) -> int:
-    """Returns seconds remaining in cooldown for this symbol-direction (0 if expired or not set)."""
     expires = _cooldowns.get(f"{symbol}{direction}", 0)
     return max(0, int(expires - time.time()))
 
 
 def set_close_cooldown(symbol: str, direction: str):
-    """Called by main.py when a trade fully closes — the ONLY place cooldown is started."""
     key = f"{symbol}{direction}"
     _set_cooldown(key, reason="TRADE_CLOSE")
+    _pending.pop(key, None)
+    _last_result[key] = False
+    _confirmed_at.pop(key, None)
 
 
 def reset_scan_counter(symbol: str, direction: str):
-    """Called by main.py when a trade fully closes — resets consecutive-scan confirmation state."""
     key = f"{symbol}{direction}"
-    _prev_scores[key] = 0
+    _last_result[key] = False
     _pending.pop(key, None)
-    logger.info("[RESET] %s %s scan counter reset on trade close", symbol, direction)
+    _confirmed_at.pop(key, None)
+    logger.info("[RESET] %s %s scan counter reset", symbol, direction)
 
 
-def get_promoted_pairs() -> list[dict]:
-    """Returns current promoted pair entries for serialisation."""
-    return list(_promoted_pairs.values())
-
-
-def get_universe_state() -> dict:
-    """Returns universe scanner state for serialisation."""
-    return dict(_universe_state)
+def clear_all_scanner_state():
+    """Wipe all per-pair scan state — used by the log-clear endpoint."""
+    _last_result.clear()
+    _pending.clear()
+    _confirmed_at.clear()
+    _cooldowns.clear()
+    logger.info("[CLEAR] all scanner state cleared (counters + cooldowns)")
 
 
 # ── Pure-pandas indicator helpers ─────────────────────────────────────────────
 
 def _wilder_smooth(series: pd.Series, period: int) -> pd.Series:
-    """Wilder's smoothing (EMA with alpha = 1/period)."""
     result = np.full(len(series), np.nan)
-    # find first non-NaN index
-    start = series.first_valid_index()
+    start  = series.first_valid_index()
     if start is None:
         return pd.Series(result, index=series.index)
-    i0 = series.index.get_loc(start)
-    # seed with SMA of first `period` values
+    i0       = series.index.get_loc(start)
     seed_end = i0 + period
     if seed_end > len(series):
         return pd.Series(result, index=series.index)
@@ -132,86 +169,68 @@ def _wilder_smooth(series: pd.Series, period: int) -> pd.Series:
     return pd.Series(result, index=series.index)
 
 
-def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    high = df["high"]
-    low = df["low"]
-    close = df["close"]
-    prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs(),
-    ], axis=1).max(axis=1)
-    return _wilder_smooth(tr, period)
-
-
 def compute_adx(df: pd.DataFrame, period: int = 14) -> float:
-    """Returns latest ADX value (scalar)."""
     if len(df) < period * 2 + 1:
         return 0.0
-    high = df["high"]
-    low = df["low"]
+    high  = df["high"]
+    low   = df["low"]
     close = df["close"]
-
-    move_up = high.diff()
+    move_up   = high.diff()
     move_down = -low.diff()
-
-    plus_dm = pd.Series(np.where((move_up > move_down) & (move_up > 0), move_up, 0.0), index=df.index)
-    minus_dm = pd.Series(np.where((move_down > move_up) & (move_down > 0), move_down, 0.0), index=df.index)
-
+    plus_dm  = pd.Series(
+        np.where((move_up > move_down) & (move_up > 0), move_up, 0.0), index=df.index
+    )
+    minus_dm = pd.Series(
+        np.where((move_down > move_up) & (move_down > 0), move_down, 0.0), index=df.index
+    )
     prev_close = close.shift(1)
     tr = pd.concat([
         high - low,
         (high - prev_close).abs(),
-        (low - prev_close).abs(),
+        (low  - prev_close).abs(),
     ], axis=1).max(axis=1)
-
-    atr_s = _wilder_smooth(tr.iloc[1:], period)
-    plus_dm_s = _wilder_smooth(plus_dm.iloc[1:], period)
+    atr_s      = _wilder_smooth(tr.iloc[1:], period)
+    plus_dm_s  = _wilder_smooth(plus_dm.iloc[1:], period)
     minus_dm_s = _wilder_smooth(minus_dm.iloc[1:], period)
-
-    plus_di = 100 * plus_dm_s / atr_s.replace(0, np.nan)
+    plus_di  = 100 * plus_dm_s  / atr_s.replace(0, np.nan)
     minus_di = 100 * minus_dm_s / atr_s.replace(0, np.nan)
-
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    dx  = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
     adx = _wilder_smooth(dx.dropna(), period)
-
     if adx.empty or pd.isna(adx.iloc[-1]):
         return 0.0
     return float(adx.iloc[-1])
 
 
 def compute_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
+    delta    = series.diff()
+    gain     = delta.clip(lower=0)
+    loss     = (-delta).clip(lower=0)
     avg_gain = _wilder_smooth(gain.iloc[1:], period)
     avg_loss = _wilder_smooth(loss.iloc[1:], period)
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rs  = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
 
-def compute_stoch_kdj(df: pd.DataFrame, k_period: int = 9, d_period: int = 3, smooth_k: int = 3) -> tuple[float, float, float]:
-    """Returns (K, D, J) as scalars. J = 3K - 2D."""
+def compute_stoch_kdj(
+    df: pd.DataFrame,
+    k_period: int = 9,
+    d_period: int = 3,
+    smooth_k: int = 3,
+) -> tuple[float, float, float]:
     if len(df) < k_period + d_period + smooth_k:
         return 50.0, 50.0, 50.0
-
-    low_min = df["low"].rolling(k_period).min()
+    low_min  = df["low"].rolling(k_period).min()
     high_max = df["high"].rolling(k_period).max()
-    denom = (high_max - low_min).replace(0, np.nan)
-    raw_k = 100 * (df["close"] - low_min) / denom
-
-    # Smooth %K
+    denom    = (high_max - low_min).replace(0, np.nan)
+    raw_k    = 100 * (df["close"] - low_min) / denom
     smooth_k_series = raw_k.rolling(smooth_k).mean()
-    d_series = smooth_k_series.rolling(d_period).mean()
-
-    # Clamp K and D to [0, 100] before computing J
-    k_val = max(0.0, min(100.0, float(smooth_k_series.iloc[-1]))) if pd.notna(smooth_k_series.iloc[-1]) else 50.0
-    d_val = max(0.0, min(100.0, float(d_series.iloc[-1]))) if pd.notna(d_series.iloc[-1]) else 50.0
-    # J is intentionally unbounded (raw KDJ convention); displayed in pair table for reference only
+    d_series        = smooth_k_series.rolling(d_period).mean()
+    k_val = float(smooth_k_series.iloc[-1]) if pd.notna(smooth_k_series.iloc[-1]) else 50.0
+    d_val = float(d_series.iloc[-1])        if pd.notna(d_series.iloc[-1])        else 50.0
+    k_val = max(0.0, min(100.0, k_val))
+    d_val = max(0.0, min(100.0, d_val))
     j_val = 3 * k_val - 2 * d_val
-
     return k_val, d_val, j_val
 
 
@@ -221,11 +240,10 @@ def classify_trend(df_1h: pd.DataFrame) -> str:
     if len(df_1h) < 60:
         return "Neutral"
     close = df_1h["close"]
-    ma10 = close.rolling(10).mean().iloc[-1]
-    ma30 = close.rolling(30).mean().iloc[-1]
-    ma60 = close.rolling(60).mean().iloc[-1]
+    ma10  = close.rolling(10).mean().iloc[-1]
+    ma30  = close.rolling(30).mean().iloc[-1]
+    ma60  = close.rolling(60).mean().iloc[-1]
     price = close.iloc[-1]
-
     if price > ma10 > ma30 > ma60:
         return "Strong Bull"
     elif price < ma10 < ma30 < ma60:
@@ -233,558 +251,720 @@ def classify_trend(df_1h: pd.DataFrame) -> str:
     return "Neutral"
 
 
+def get_trend_strength(adx: float, trend: str) -> str:
+    """Return ADX-tiered trend strength label."""
+    if trend == "Neutral":
+        return "NEUTRAL"
+    if adx >= 60:
+        return "HIGH_PROB"
+    elif adx >= 40:
+        return "STRONG"
+    elif adx >= 25:
+        return "REGULAR"
+    return "NEUTRAL"
+
+
+def get_directional_trend_strength(adx: float, trend: str) -> str:
+    """Return combined direction+tier label for trend pill display."""
+    if trend == "Neutral":
+        return "NEUTRAL"
+    suffix = "BULL" if trend == "Strong Bull" else "BEAR"
+    if adx >= 60:
+        tier = "HIGH_PROB"
+    elif adx >= 40:
+        tier = "STRONG"
+    elif adx >= 25:
+        tier = "REGULAR"
+    else:
+        return "NEUTRAL"
+    return f"{tier}_{suffix}"
+
+
+def check_limit_order_cancellation(alert: dict, pair_state: dict) -> tuple[bool, str]:
+    """
+    Check whether a pending LIMIT order should be cancelled.
+    Returns (should_cancel, reason_msg).
+    Cancellation conditions:
+      C1 — Trend changed from signal direction
+      C2 — ADX collapsed below minimum
+      C3 — Gate that was passing at alert time now fails
+      C4 — Time ceiling exceeded for this tier
+    """
+    symbol    = alert["symbol"]
+    direction = alert["direction"]
+    snap      = alert.get("conditions_snapshot", {})
+    cycles    = alert.get("scan_cycles_since_alert", 0)
+    tier      = alert.get("trend_strength", "REGULAR")
+
+    current_trend = pair_state.get("trend", "Neutral")
+    current_adx   = float(pair_state.get("adx", 0) or 0)
+    gs            = pair_state.get("gates_status", {})
+    adx_min       = PAIR_ADX_OVERRIDES.get(symbol, TC_ADX_MIN)
+
+    # C1 — Trend changed from signal direction
+    if direction == "LONG" and current_trend != "Strong Bull":
+        return True, (
+            f"[CANCEL] {symbol} {direction} — trend changed to {current_trend!r} "
+            f"after {cycles} cycles"
+        )
+    if direction == "SHORT" and current_trend != "Strong Bear":
+        return True, (
+            f"[CANCEL] {symbol} {direction} — trend changed to {current_trend!r} "
+            f"after {cycles} cycles"
+        )
+
+    # C2 — ADX collapsed below minimum
+    if current_adx < adx_min:
+        return True, (
+            f"[CANCEL] {symbol} {direction} — ADX collapsed to {current_adx:.1f} "
+            f"(min={adx_min}) after {cycles} cycles"
+        )
+
+    # C3 — Gate that was passing at alert time now fails
+    gate_map = {
+        "trend_pass": "TREND",
+        "adx_pass":   "ADX",
+        "depth_pass": "DEPTH",
+        "ma_pass":    "MA",
+    }
+    for gate_key, gate_name in gate_map.items():
+        was_passing = snap.get(gate_key, True)
+        now_passing = gs.get(gate_key, True)
+        if was_passing and not now_passing:
+            return True, (
+                f"[CANCEL] {symbol} {direction} — {gate_name} gate failed "
+                f"after {cycles} cycles"
+            )
+
+    # C4 — Time ceiling
+    if tier == "STRONG" and cycles >= STRONG_CANCEL_CYCLES:
+        return True, (
+            f"[CANCEL] {symbol} {direction} — time ceiling {STRONG_CANCEL_CYCLES} "
+            f"cycles reached (STRONG tier)"
+        )
+    if tier in ("REGULAR", "NEUTRAL") and cycles >= REGULAR_CANCEL_CYCLES:
+        return True, (
+            f"[CANCEL] {symbol} {direction} — time ceiling {REGULAR_CANCEL_CYCLES} "
+            f"cycles reached (REGULAR tier)"
+        )
+
+    return False, ""
+
+
 def get_ma_values(df_1h: pd.DataFrame) -> tuple[float, float, float]:
     close = df_1h["close"]
-    ma10 = float(close.rolling(10).mean().iloc[-1])
-    ma30 = float(close.rolling(30).mean().iloc[-1])
-    ma60 = float(close.rolling(60).mean().iloc[-1])
-    return ma10, ma30, ma60
+    return (
+        float(close.rolling(10).mean().iloc[-1]),
+        float(close.rolling(30).mean().iloc[-1]),
+        float(close.rolling(60).mean().iloc[-1]),
+    )
 
 
-# ── Per-indicator calcs ───────────────────────────────────────────────────────
+def compute_ma_data(df: pd.DataFrame, price: float) -> dict:
+    """MA5/10/30/60, stack classification, and direction arrows for one timeframe."""
+    if df is None or len(df) < 5:
+        return {
+            "ma5": None, "ma10": None, "ma30": None, "ma60": None,
+            "ma5_dir": "FLAT", "ma10_dir": "FLAT", "ma30_dir": "FLAT", "ma60_dir": "FLAT",
+            "stack": "NEUTRAL", "price": round(float(price), 6),
+        }
+    close = df["close"]
+    n     = len(close)
 
-def compute_rsi_5m(df_5m: pd.DataFrame) -> tuple[float, float]:
-    """(rsi_current, rsi_prev) from 5m close."""
-    if len(df_5m) < 16:
+    def sma(period):
+        return round(float(close.rolling(period).mean().iloc[-1]), 6) if n >= period else None
+
+    def sma_prev(period):
+        return float(close.rolling(period).mean().iloc[-2]) if n >= period + 1 else None
+
+    def dir_arrow(curr, prev):
+        if curr is None or prev is None or prev == 0:
+            return "FLAT"
+        return "FLAT" if abs(curr - prev) / prev * 100 <= 0.01 else ("UP" if curr > prev else "DOWN")
+
+    ma5, ma10, ma30, ma60 = sma(5), sma(10), sma(30), sma(60)
+
+    if all(v is not None for v in [ma5, ma10, ma30, ma60]):
+        if price > ma5 > ma10 > ma30 > ma60:
+            stack = "BULL"
+        elif price < ma5 < ma10 < ma30 < ma60:
+            stack = "BEAR"
+        elif ma5 > ma10:
+            stack = "MIXED"
+        else:
+            stack = "NEUTRAL"
+    else:
+        stack = "NEUTRAL"
+
+    return {
+        "ma5":     ma5,  "ma10":    ma10,  "ma30":    ma30,  "ma60":    ma60,
+        "ma5_dir":  dir_arrow(ma5,  sma_prev(5)),
+        "ma10_dir": dir_arrow(ma10, sma_prev(10)),
+        "ma30_dir": dir_arrow(ma30, sma_prev(30)),
+        "ma60_dir": dir_arrow(ma60, sma_prev(60)),
+        "stack": stack,
+        "price": round(float(price), 6),
+    }
+
+
+# ── Indicator extractions ─────────────────────────────────────────────────────
+
+def compute_rsi_1h_pair(df_1h: pd.DataFrame) -> tuple[float, float]:
+    if len(df_1h) < 16:
         return 50.0, 50.0
-    rsi_s = compute_rsi(df_5m["close"], 14)
-    rsi_s = rsi_s.dropna()
+    rsi_s = compute_rsi(df_1h["close"], 14).dropna()
     if len(rsi_s) < 2:
         return 50.0, 50.0
     return float(rsi_s.iloc[-1]), float(rsi_s.iloc[-2])
 
 
-def compute_rsi_1h(df_1h: pd.DataFrame) -> float:
-    if len(df_1h) < 16:
-        return 50.0
-    rsi_s = compute_rsi(df_1h["close"], 14).dropna()
-    if rsi_s.empty:
-        return 50.0
-    return float(rsi_s.iloc[-1])
-
-
-def compute_volume_ma10(df_5m: pd.DataFrame) -> tuple[float, float]:
-    """(last_vol, vol_ma10)."""
-    if len(df_5m) < 11:
-        return 0.0, 0.0
-    vol = df_5m["volume"]
-    ma = vol.rolling(10).mean()
-    return float(vol.iloc[-1]), float(ma.iloc[-1])
-
-
-def compute_j5(df_5m: pd.DataFrame) -> float:
-    _, _, j = compute_stoch_kdj(df_5m, k_period=9, d_period=3, smooth_k=3)
+def compute_j1h(df_1h: pd.DataFrame) -> float:
+    _, _, j = compute_stoch_kdj(df_1h, k_period=9, d_period=3, smooth_k=3)
     return j
 
 
+def compute_vol_1h(df_1h: pd.DataFrame) -> tuple[float, float]:
+    if len(df_1h) < 11:
+        return 0.0, 0.0
+    vol = df_1h["volume"]
+    ma  = vol.rolling(10).mean()
+    return float(vol.iloc[-1]), float(ma.iloc[-1])
+
+
+# ── Orderbook depth ───────────────────────────────────────────────────────────
+
 def compute_depth_pcts(orderbook: dict) -> tuple[float, float]:
-    bids = orderbook.get("bids", [])
-    asks = orderbook.get("asks", [])
+    bids      = orderbook.get("bids", [])
+    asks      = orderbook.get("asks", [])
     bid_total = sum(b["sz"] for b in bids)
     ask_total = sum(a["sz"] for a in asks)
-    total = bid_total + ask_total
+    total     = bid_total + ask_total
     if total == 0:
         return 50.0, 50.0
     return bid_total / total * 100, ask_total / total * 100
 
 
-def compute_atr_5m(df_5m: pd.DataFrame) -> float:
-    if len(df_5m) < 16:
-        return 0.0
-    atr_s = compute_atr(df_5m, 14)
-    val = atr_s.dropna()
-    return float(val.iloc[-1]) if not val.empty else 0.0
+# ── Wall detection ────────────────────────────────────────────────────────────
+
+def compute_walls(orderbook: dict, current_price: float, symbol: str = "?") -> dict:
+    """Find the largest single price level within 2% of current price on each side."""
+    if current_price <= 0:
+        return {"bid_wall": None, "ask_wall": None}
+    pct_range = current_price * 0.02
+
+    bid_wall_price: Optional[float] = None
+    bid_wall_sz = 0.0
+    for b in orderbook.get("bids", []):
+        px, sz = b.get("px", 0.0), b.get("sz", 0.0)
+        if px > 0 and (current_price - px) <= pct_range and sz > bid_wall_sz:
+            bid_wall_sz  = sz
+            bid_wall_price = px
+
+    ask_wall_price: Optional[float] = None
+    ask_wall_sz = 0.0
+    for a in orderbook.get("asks", []):
+        px, sz = a.get("px", 0.0), a.get("sz", 0.0)
+        if px > 0 and (px - current_price) <= pct_range and sz > ask_wall_sz:
+            ask_wall_sz  = sz
+            ask_wall_price = px
+
+    if bid_wall_price is not None or ask_wall_price is not None:
+        logger.info(
+            "[WALL] %s bid_wall=%s ask_wall=%s",
+            symbol,
+            f"{bid_wall_price:.4f}" if bid_wall_price else "None",
+            f"{ask_wall_price:.4f}" if ask_wall_price else "None",
+        )
+    return {"bid_wall": bid_wall_price, "ask_wall": ask_wall_price}
 
 
-# ── Gate status (for dots display and closest-pair ranking) ───────────────────
+# ── 4-condition signal check ──────────────────────────────────────────────────
+
+def check_tc_signal(
+    direction: str,
+    price: float,
+    ma10: float, ma30: float, ma60: float,
+    adx_1h: float,
+    bid_pct: float, ask_pct: float,
+    adx_min: int = TC_ADX_MIN,
+) -> tuple[bool, dict]:
+    """Check all four conditions. Returns (signal, conditions).
+
+    C1 TREND  — price aligned with full MA stack direction.
+    C2 ADX    — adx_1h >= adx_min (global TC_ADX_MIN or per-pair override).
+    C3 DEPTH  — orderbook depth >= DEPTH_GATE_PCT on the correct side.
+    C4 MA     — MA10/MA30/MA60 strictly stacked (implied by C1, shown separately).
+    """
+    if direction == "LONG":
+        trend_pass = bool(price > ma10 > ma30 > ma60)
+        ma_pass    = bool(ma10 > ma30 > ma60)
+        depth_pass = bid_pct >= DEPTH_GATE_PCT
+    else:
+        trend_pass = bool(price < ma10 < ma30 < ma60)
+        ma_pass    = bool(ma10 < ma30 < ma60)
+        depth_pass = ask_pct >= DEPTH_GATE_PCT
+    adx_pass = adx_1h >= adx_min
+    signal   = trend_pass and adx_pass and depth_pass  # ma_pass implied by trend_pass
+    return signal, {
+        "trend_pass": trend_pass,
+        "adx_pass":   adx_pass,
+        "depth_pass": depth_pass,
+        "ma_pass":    ma_pass,
+    }
+
+
+# ── Gate status (4-dot display) ───────────────────────────────────────────────
 
 def compute_gates_status(
-    trend: str, adx_1h: float,
+    price: float,
+    ma10: float, ma30: float, ma60: float,
+    adx_1h: float,
     bid_pct: float, ask_pct: float,
-    j5: float,
+    adx_min: int = TC_ADX_MIN,
+    j_1h: float = 50.0,
 ) -> dict:
-    """Per-gate pass/fail for the strongest direction. Uses raw (unbounded) j5."""
-    if trend == "Strong Bear":
-        direction = "SHORT"
-    elif trend == "Strong Bull":
-        direction = "LONG"
-    else:
-        return {"gates_direction": "NONE", "trend_pass": False, "adx_pass": False,
-                "depth_pass": False, "j_pass": False, "gates_passing": 0}
-
-    adx_pass = adx_1h >= TC_ADX_MIN
-    if direction == "LONG":
-        depth_pass = bid_pct >= 55.0
-        j_pass = (j5 < 45.0 or j5 > 55.0) if adx_1h >= 50 else (j5 < 20.0)
-    else:
-        depth_pass = ask_pct >= 55.0
-        j_pass = (j5 > 55.0 or j5 < 45.0) if adx_1h >= 50 else (j5 > 80.0)
-
-    gates_passing = 1 + int(adx_pass) + int(depth_pass) + int(j_pass)
-    return {
-        "gates_direction": direction,
-        "trend_pass": True,
-        "adx_pass": adx_pass,
-        "depth_pass": depth_pass,
-        "j_pass": j_pass,
-        "gates_passing": gates_passing,
+    """Return best-direction 4-gate status (T·A·D·J) for the pair table display."""
+    best: dict = {
+        "gates_direction": "NONE",
+        "trend_pass": False, "adx_pass": False,
+        "depth_pass": False, "ma_pass": False, "j_pass": False,
+        "gates_passing": 0, "failing_gate": None,
     }
+    for direction in ("LONG", "SHORT"):
+        _, conds = check_tc_signal(direction, price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min)
 
-
-# ── Scoring ───────────────────────────────────────────────────────────────────
-
-def score_tc_long(
-    symbol: str,
-    trend: str, adx_1h: float,
-    ma10: float, ma30: float, ma60: float,
-    rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
-    last_vol: float, vol_ma10: float,
-    bid_pct: float, j5: float,
-) -> int:
-    if trend != "Strong Bull": return 0
-    if adx_1h < TC_ADX_MIN: return 0
-    if bid_pct < 55.0: return 0
-
-    # J gate: two-tier based on ADX strength
-    if adx_1h >= 50:
-        if j5 < 45.0:
-            j_condition = "OVERSOLD"
-        elif j5 > 55.0:
-            j_condition = "MOMENTUM"
+        # J gate: standard (ADX<50) or relaxed (ADX>=50)
+        if direction == "LONG":
+            j_pass = j_1h <= 20 or (adx_1h >= 50 and j_1h <= 45)
         else:
-            return 0  # J in neutral zone — no confirmation
-        logger.info("[GATE] %s LONG adx=%.1f tier=RELAXED j5=%.1f condition=%s pass.",
-                    symbol, adx_1h, j5, j_condition)
-    else:
-        if j5 < 20.0:
-            logger.info("[GATE] %s LONG adx=%.1f tier=STANDARD j5=%.1f condition=OVERSOLD pass.",
-                        symbol, adx_1h, j5)
-        else:
-            return 0
+            j_pass = j_1h >= 80 or (adx_1h >= 50 and j_1h >= 55)
 
-    score = 2  # P1 + P2 free (guaranteed by gates)
-    p3 = int(ma10 > ma30 > ma60)
-    p4 = int(rsi_5m < 40 and rsi_5m > rsi_5m_prev)
-    p5 = int(rsi_1h > 50)
-    p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
-    score += p3 + p4 + p5 + p6
-    score += 1  # P7 free
+        n = sum([conds["trend_pass"], conds["adx_pass"], conds["depth_pass"], j_pass])
 
-    if score < TC_MIN_SCORE:
-        reasons = []
-        if not p3: reasons.append("P3 ma not aligned bull")
-        if not p4: reasons.append("P4 rsi_5m not rising from oversold")
-        if not p5: reasons.append("P5 rsi_1h below 50")
-        if not p6: reasons.append("P6 volume not spiking")
-        logger.info(
-            "[SCORE DETAIL] %s LONG gates=PASS score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
-            symbol, score, p3, p4, p5, p6, " ".join(reasons),
-        )
+        failing: Optional[str] = None
+        if n >= 3:
+            for name, v in [
+                ("TREND", conds["trend_pass"]),
+                ("ADX",   conds["adx_pass"]),
+                ("DEPTH", conds["depth_pass"]),
+                ("J",     j_pass),
+            ]:
+                if not v:
+                    failing = name
+                    break
 
-    return score
+        is_trend_aligned   = conds["trend_pass"]
+        best_trend_aligned = best.get("trend_pass", False)
 
-
-def score_tc_short(
-    symbol: str,
-    trend: str, adx_1h: float,
-    ma10: float, ma30: float, ma60: float,
-    rsi_5m: float, rsi_5m_prev: float, rsi_1h: float,
-    last_vol: float, vol_ma10: float,
-    ask_pct: float, j5: float,
-) -> int:
-    if trend != "Strong Bear": return 0
-    if adx_1h < TC_ADX_MIN: return 0
-    if ask_pct < 55.0: return 0
-
-    # J gate: two-tier based on ADX strength
-    if adx_1h >= 50:
-        if j5 > 55.0:
-            j_condition = "OVERBOUGHT"
-        elif j5 < 45.0:
-            j_condition = "CAPITULATION"
-        else:
-            return 0  # J in neutral zone — no confirmation
-        logger.info("[GATE] %s SHORT adx=%.1f tier=RELAXED j5=%.1f condition=%s pass.",
-                    symbol, adx_1h, j5, j_condition)
-    else:
-        if j5 > 80.0:
-            logger.info("[GATE] %s SHORT adx=%.1f tier=STANDARD j5=%.1f condition=OVERBOUGHT pass.",
-                        symbol, adx_1h, j5)
-        else:
-            return 0
-
-    # ── Tier determination (must come before point calculation) ─────────────
-    is_capitulation = adx_1h >= 50 and j5 < 45.0
-    tier = "CAPITULATION" if is_capitulation else "STANDARD"
-
-    score = 2  # P1 + P2 free
-    p3 = int(ma10 < ma30 < ma60)
-
-    # P4 — tier-aware RSI confirmation
-    if is_capitulation:
-        # RSI oversold and ticking up: exhaustion bounce before continuation lower
-        p4 = int(rsi_5m < 40 and rsi_5m > rsi_5m_prev)
-    else:
-        # RSI declining from overbought: standard momentum confirmation
-        p4 = int(rsi_5m > 60 and rsi_5m < rsi_5m_prev)
-
-    p5 = int(rsi_1h < 50)
-
-    # P6 — tier-aware volume threshold
-    if is_capitulation:
-        p6 = int(vol_ma10 > 0 and last_vol > 1.2 * vol_ma10)
-    else:
-        p6 = int(vol_ma10 > 0 and last_vol > 1.5 * vol_ma10)
-
-    score += p3 + p4 + p5 + p6
-    score += 1  # P7 free
-
-    # Tier log — fires whenever all 4 hard gates pass, regardless of score
-    # Expose every sub-condition value so Railway logs make the evaluation unambiguous.
-    vol_ratio = (last_vol / vol_ma10) if vol_ma10 > 0 else 0.0
-    _prev_valid = rsi_5m_prev is not None and not (isinstance(rsi_5m_prev, float) and rsi_5m_prev != rsi_5m_prev)
-    if is_capitulation:
-        _oversold = rsi_5m < 40
-        _rising   = (rsi_5m > rsi_5m_prev) if _prev_valid else False
-        logger.info(
-            "[TIER] %s SHORT tier=CAPITULATION P4=%d"
-            " rsi_5m=%.2f rsi_5m_prev=%s"
-            " condition=rsi<40_AND_rising"
-            " evaluated=%.2f<40=%s rising=%s"
-            " P6=%d vol=%.2fx MA10 threshold=1.2x",
-            symbol, p4,
-            rsi_5m, f"{rsi_5m_prev:.2f}" if _prev_valid else "NaN",
-            rsi_5m, str(_oversold).upper(), str(_rising).upper(),
-            p6, vol_ratio,
-        )
-    else:
-        _overbought = rsi_5m > 60
-        _falling    = (rsi_5m < rsi_5m_prev) if _prev_valid else False
-        logger.info(
-            "[TIER] %s SHORT tier=STANDARD P4=%d"
-            " rsi_5m=%.2f rsi_5m_prev=%s"
-            " condition=rsi>60_AND_falling"
-            " evaluated=%.2f>60=%s falling=%s"
-            " P6=%d vol=%.2fx MA10 threshold=1.5x",
-            symbol, p4,
-            rsi_5m, f"{rsi_5m_prev:.2f}" if _prev_valid else "NaN",
-            rsi_5m, str(_overbought).upper(), str(_falling).upper(),
-            p6, vol_ratio,
-        )
-
-    if score < TC_MIN_SCORE:
-        reasons = []
-        if not p3: reasons.append("P3 ma not aligned bear")
-        if not p4: reasons.append(
-            f"P4 rsi_5m not rising from oversold (rsi_5m={rsi_5m:.1f} prev={rsi_5m_prev:.1f})" if is_capitulation
-            else f"P4 rsi_5m not falling from overbought (rsi_5m={rsi_5m:.1f} prev={rsi_5m_prev:.1f})"
-        )
-        if not p5: reasons.append("P5 rsi_1h above 50")
-        if not p6: reasons.append(
-            "P6 vol below 1.2x MA10" if is_capitulation else "P6 volume not spiking"
-        )
-        logger.info(
-            "[SCORE DETAIL] %s SHORT gates=PASS tier=%s score=%d/7 P1=1 P2=1 P3=%d P4=%d P5=%d P6=%d P7=1 reason=%s",
-            symbol, tier, score, p3, p4, p5, p6, " ".join(reasons),
-        )
-
-    return score
+        if (n > best["gates_passing"] or
+                (n == best["gates_passing"] and is_trend_aligned and not best_trend_aligned)):
+            best = {
+                "gates_direction": direction,
+                "trend_pass":  conds["trend_pass"],
+                "adx_pass":    conds["adx_pass"],
+                "depth_pass":  conds["depth_pass"],
+                "ma_pass":     conds["ma_pass"],   # kept for backward compat
+                "j_pass":      j_pass,
+                "gates_passing": n,
+                "failing_gate":  failing,
+            }
+    return best
 
 
-# ── SL / TP ───────────────────────────────────────────────────────────────────
+# ── Fixed SL / TP ─────────────────────────────────────────────────────────────
 
-def calc_sl_tp(entry_price: float, direction: str, atr: float, margin_usdc: float,
-               leverage: int = 10, symbol: str = "?") -> dict:
-    """Compute SL/TP levels from ATR.
-    sl_distance = 1.5 × ATR, clamped to [0.3%, 3.0%] of entry — outside that range
-    the ATR value is invalid (NaN bleed, wrong candle timeframe, etc.) and a 1.0%
-    fallback is used instead.
-    dollar_risk = 1R dollar loss = margin × leverage × sl_pct  (leverage-aware)."""
-    sl_distance = 1.5 * atr
-    sl_pct = (sl_distance / entry_price) * 100 if entry_price > 0 else 0
-
-    # Reject ATR values that would produce nonsensical SL distances
-    if atr <= 0 or sl_pct < 0.3 or sl_pct > 3.0:
-        logger.warning(
-            "[ATR WARNING] %s %s invalid ATR=%.6f (sl_pct=%.3f%%) — using fallback 1.0%%",
-            symbol, direction, atr, sl_pct,
-        )
-        sl_pct = 1.0
-        sl_distance = entry_price * 0.01
-
+def calc_sl_tp(entry_price: float, direction: str, trend_strength: str = "REGULAR", symbol: str = "?") -> dict:
+    sl_dist  = entry_price * SL_PCT
+    sl_half  = entry_price * SL_HALF_PCT
     if direction == "LONG":
-        sl_price  = entry_price - sl_distance
-        tp1_price = entry_price + 1.5 * sl_distance
-        tp2_price = entry_price + 2.0 * sl_distance
+        sl_price      = entry_price - sl_dist
+        sl_half_price = entry_price - sl_half
+        tp1_price     = entry_price + sl_dist * TP1_MULTIPLIER
+        tp2_price     = entry_price + sl_dist * TP2_MULTIPLIER
+        tp3_price     = entry_price + sl_dist * TP3_MULTIPLIER
     else:
-        sl_price  = entry_price + sl_distance
-        tp1_price = entry_price - 1.5 * sl_distance
-        tp2_price = entry_price - 2.0 * sl_distance
-
-    # dollar_risk = leverage-aware 1R dollar loss
-    dollar_risk = margin_usdc * leverage * (sl_pct / 100)
-
-    return {
-        "sl_price":    round(sl_price, 6),
-        "sl_pct":      round(sl_pct, 2),
-        "sl_distance": round(sl_distance, 8),
-        "dollar_risk": round(dollar_risk, 2),
-        "tp1_price":   round(tp1_price, 6),
-        "tp2_price":   round(tp2_price, 6),
+        sl_price      = entry_price + sl_dist
+        sl_half_price = entry_price + sl_half
+        tp1_price     = entry_price - sl_dist * TP1_MULTIPLIER
+        tp2_price     = entry_price - sl_dist * TP2_MULTIPLIER
+        tp3_price     = entry_price - sl_dist * TP3_MULTIPLIER
+    sl_pct_val = SL_PCT * 100
+    tp_info = "TP1+TP2+TP3" if trend_strength == "HIGH_PROB" else ("TP1+TP2" if trend_strength == "STRONG" else "TP1")
+    logger.info(
+        "[LEVELS] %s %s %s entry=%.4f sl=%.4f (%.1f%%) sl_half=%.4f tp1=%.4f tp2=%.4f tp3=%.4f",
+        symbol, direction, tp_info, entry_price,
+        sl_price, sl_pct_val, sl_half_price, tp1_price, tp2_price, tp3_price,
+    )
+    result = {
+        "sl_price":      round(sl_price, 6),
+        "sl_half_price": round(sl_half_price, 6),
+        "sl_pct":        round(sl_pct_val, 2),
+        "sl_distance":   round(sl_dist, 8),
+        "tp1_price":     round(tp1_price, 6),
     }
+    if trend_strength in ("HIGH_PROB", "STRONG"):
+        result["tp2_price"] = round(tp2_price, 6)
+    if trend_strength == "HIGH_PROB":
+        result["tp3_price"] = round(tp3_price, 6)
+    return result
+
+
+# ── Dynamic leverage (ADX-based) ──────────────────────────────────────────────
+
+def get_dynamic_leverage(adx: float, symbol: str = "?", direction: str = "?") -> int:
+    if adx >= 60:
+        lev, tier = LEVERAGE_TIER3, 3
+    elif adx >= 50:
+        lev, tier = LEVERAGE_TIER2, 2
+    else:
+        lev, tier = LEVERAGE_TIER1, 1
+    logger.info(
+        "[LEVERAGE] %s %s adx=%.1f tier=%d leverage=%dx",
+        symbol, direction, adx, tier, lev,
+    )
+    return lev
 
 
 # ── Per-pair scan ─────────────────────────────────────────────────────────────
 
 async def scan_pair(symbol: str, client: HLClient) -> dict:
+    global _btc_regime
+
     try:
-        candles_5m_raw, candles_1h_raw, orderbook, price = await asyncio.gather(
-            client.get_candles(symbol, "5m", 50),
-            client.get_candles(symbol, "1h", 80),
-            client.get_orderbook(symbol, 20),
-            client.get_price(symbol),
-        )
+        # 1h candle cache — skip network fetch if candle hour unchanged
+        cache_key = f"{symbol}_1h"
+        cached_1h = _candle_cache.get(cache_key)
+        now_hour  = int(time.time()) // 3600
+
+        if cached_1h and cached_1h.get("hour") == now_hour:
+            logger.info("[CACHE] %s 1h candles unchanged using cached data", symbol)
+            candles_1h_raw = cached_1h["candles"]
+            orderbook, price, change_24h = await asyncio.gather(
+                client.get_orderbook(symbol, 20),
+                client.get_price(symbol),
+                client.get_24h_change(symbol),
+            )
+        else:
+            candles_1h_raw, orderbook, price, change_24h = await asyncio.gather(
+                client.get_candles(symbol, "1h", 80),
+                client.get_orderbook(symbol, 20),
+                client.get_price(symbol),
+                client.get_24h_change(symbol),
+            )
+            if candles_1h_raw:
+                _candle_cache[cache_key] = {
+                    "candles": candles_1h_raw,
+                    "hour":    now_hour,
+                    "last_ts": candles_1h_raw[-1]["time"],
+                }
     except Exception as e:
         print(f"[scanner] Data fetch error for {symbol}: {e}")
-        return {"symbol": symbol, "error": str(e)}
+        lkg = _last_known_good.get(symbol)
+        if lkg:
+            logger.info("[STALE DATA] %s using last known good from previous scan", symbol)
+            stale = dict(lkg)
+            stale["data_stale"] = True
+            return stale
+        return {"symbol": symbol, "error": str(e), "data_stale": True}
 
-    if not candles_5m_raw or not candles_1h_raw or price is None:
-        return {"symbol": symbol, "error": "Insufficient data"}
+    # 5m / 15m candle cache — slot-based (refreshes every 5m / 15m interval)
+    now_5m_slot  = int(time.time()) // 300
+    now_15m_slot = int(time.time()) // 900
+    cached_5m    = _candle_cache.get(f"{symbol}_5m")
+    cached_15m   = _candle_cache.get(f"{symbol}_15m")
+    need_5m      = not (cached_5m  and cached_5m.get("slot")  == now_5m_slot)
+    need_15m     = not (cached_15m and cached_15m.get("slot") == now_15m_slot)
+    try:
+        fetch_tasks = []
+        if need_5m:  fetch_tasks.append(client.get_candles(symbol, "5m",  70))
+        if need_15m: fetch_tasks.append(client.get_candles(symbol, "15m", 70))
+        if fetch_tasks:
+            fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            idx = 0
+            if need_5m:
+                raw = fetched[idx]; idx += 1
+                if isinstance(raw, list) and raw:
+                    _candle_cache[f"{symbol}_5m"] = {"candles": raw, "slot": now_5m_slot}
+                    cached_5m = {"candles": raw}
+            if need_15m:
+                raw = fetched[idx]
+                if isinstance(raw, list) and raw:
+                    _candle_cache[f"{symbol}_15m"] = {"candles": raw, "slot": now_15m_slot}
+                    cached_15m = {"candles": raw}
+    except Exception as e_tf:
+        logger.warning("[CACHE] %s 5m/15m fetch error: %s", symbol, e_tf)
+    candles_5m_raw  = (cached_5m  or {}).get("candles", [])
+    candles_15m_raw = (cached_15m or {}).get("candles", [])
 
-    df_5m = pd.DataFrame(candles_5m_raw)
-    df_1h = pd.DataFrame(candles_1h_raw)
+    if not candles_1h_raw or price is None:
+        lkg = _last_known_good.get(symbol)
+        if lkg:
+            logger.info("[STALE DATA] %s null price/candles using last known good", symbol)
+            stale = dict(lkg)
+            stale["data_stale"] = True
+            return stale
+        return {"symbol": symbol, "error": "Insufficient data", "data_stale": True}
 
-    trend = classify_trend(df_1h)
-    ma10, ma30, ma60 = get_ma_values(df_1h)
-    adx_1h = compute_adx(df_1h, 14)
-    rsi_5m, rsi_5m_prev = compute_rsi_5m(df_5m)
-    rsi_1h = compute_rsi_1h(df_1h)
-    last_vol, vol_ma10 = compute_volume_ma10(df_5m)
-    j5 = compute_j5(df_5m)
-    bid_pct, ask_pct = compute_depth_pcts(orderbook)
-    atr = compute_atr_5m(df_5m)
+    df_1h  = pd.DataFrame(candles_1h_raw)
+    df_5m  = pd.DataFrame(candles_5m_raw)  if len(candles_5m_raw)  >= 5 else None
+    df_15m = pd.DataFrame(candles_15m_raw) if len(candles_15m_raw) >= 5 else None
+    j_5m_raw  = compute_stoch_kdj(df_5m,  k_period=9, d_period=3, smooth_k=3)[2] if df_5m  is not None else 50.0
+    j_15m_raw = compute_stoch_kdj(df_15m, k_period=9, d_period=3, smooth_k=3)[2] if df_15m is not None else 50.0
+    j_5m      = round(max(0.0, min(100.0, j_5m_raw)),  1)
+    j_15m     = round(max(0.0, min(100.0, j_15m_raw)), 1)
+    if len(df_1h) < 61:
+        lkg = _last_known_good.get(symbol)
+        if lkg:
+            logger.info("[STALE DATA] %s insufficient candles using last known good", symbol)
+            stale = dict(lkg)
+            stale["data_stale"] = True
+            return stale
+        return {"symbol": symbol, "error": "Insufficient candles", "data_stale": True}
 
-    long_score = score_tc_long(
-        symbol, trend, adx_1h, ma10, ma30, ma60,
-        rsi_5m, rsi_5m_prev, rsi_1h,
-        last_vol, vol_ma10, bid_pct, j5,
-    )
-    short_score = score_tc_short(
-        symbol, trend, adx_1h, ma10, ma30, ma60,
-        rsi_5m, rsi_5m_prev, rsi_1h,
-        last_vol, vol_ma10, ask_pct, j5,
-    )
-    logger.info("[SCORE] %s LONG=%s SHORT=%s | trend=%s adx=%.1f j5=%.1f bid=%.1f ask=%.1f",
-                symbol, long_score, short_score, trend, adx_1h, j5, bid_pct, ask_pct)
+    ma10, ma30, ma60   = get_ma_values(df_1h)
+    adx_1h             = compute_adx(df_1h, 14)
+    rsi_1h, _          = compute_rsi_1h_pair(df_1h)
+    last_vol, vol_ma10 = compute_vol_1h(df_1h)
+    j1h                = compute_j1h(df_1h)
+    bid_pct, ask_pct   = compute_depth_pcts(orderbook)
+    trend              = classify_trend(df_1h)
+
+    vol_ratio   = round(last_vol / vol_ma10, 2) if vol_ma10 > 0 else 0.0
+    j1h_clamped = round(max(0.0, min(100.0, j1h)), 1)
+
+    # Update BTC regime for use by subsequent pair scans
+    if symbol == "BTC":
+        _btc_regime = trend
+        logger.info("[REGIME] BTC trend updated: %s", _btc_regime)
+
+    # Per-pair ADX floor override
+    adx_min = PAIR_ADX_OVERRIDES.get(symbol, TC_ADX_MIN)
+    if adx_min != TC_ADX_MIN:
+        logger.info(
+            "[ADX OVERRIDE] %s minimum ADX=%d (global=%d)", symbol, adx_min, TC_ADX_MIN
+        )
+
+    # Trend strength determined once, used by alert data and calc_sl_tp
+    trend_strength = get_trend_strength(adx_1h, trend)
 
     alerts = []
-    for direction, score in [("LONG", long_score), ("SHORT", short_score)]:
-        key = f"{symbol}{direction}"
-        if score >= TC_MIN_SCORE:
-            prev = _prev_scores.get(key, 0)
-            if prev >= TC_MIN_SCORE and not _in_cooldown(key):
-                # Second consecutive qualifying scan → emit full alert
-                entry_price = price
-                sl_tp = calc_sl_tp(entry_price, direction, atr, 700, leverage=10, symbol=symbol)
-                logger.info(
-                    "[TRADE] %s %s entry=%.6f atr=%.6f sl_distance=%.6f sl_price=%.6f risk_pct=%.2f%%",
-                    symbol, direction, entry_price, atr,
-                    sl_tp["sl_distance"], sl_tp["sl_price"], sl_tp["sl_pct"],
-                )
-                alerts.append({
-                    "symbol": symbol,
-                    "direction": direction,
-                    "score": score,
-                    "trend": trend,
-                    "adx": round(adx_1h, 1),
-                    "rsi_5m": round(rsi_5m, 1),
-                    "rsi_1h": round(rsi_1h, 1),
-                    "entry_price": entry_price,
-                    "margin": 700,
-                    "leverage": 10,
-                    **sl_tp,
-                    "fired_at": int(time.time()),
-                })
+    for direction in ("LONG", "SHORT"):
+        key    = f"{symbol}{direction}"
+        signal, conds = check_tc_signal(
+            direction, price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min
+        )
+
+        depth_val = ask_pct if direction == "SHORT" else bid_pct
+        logger.info(
+            "[SCAN] %s %s trend=%s adx=%.1f %s depth=%.1f %s ma=%s signal=%s",
+            symbol, direction,
+            "PASS" if conds["trend_pass"] else "FAIL",
+            adx_1h, "PASS" if conds["adx_pass"] else "FAIL",
+            depth_val, "PASS" if conds["depth_pass"] else "FAIL",
+            "PASS" if conds["ma_pass"] else "FAIL",
+            "TRUE" if signal else "FALSE",
+        )
+
+        last = _last_result.get(key, False)
+
+        if signal and not _in_cooldown(key):
+            # ── BTC regime filter ─────────────────────────────────────────────
+            if BTC_REGIME_FILTER_ENABLED and symbol != "BTC":
+                regime = _btc_regime
+                if regime == "Neutral":
+                    logger.info(
+                        "[REGIME BLOCK] %s %s blocked — BTC regime is NEUTRAL", symbol, direction
+                    )
+                    _cycle_stats["blocked_shorts" if direction == "SHORT" else "blocked_longs"] += 1
+                    _last_result[key] = False
+                    _pending.pop(key, None)
+                    continue
+                if regime == "Strong Bear" and direction == "LONG":
+                    logger.info(
+                        "[REGIME BLOCK] %s LONG blocked — BTC regime is BEAR", symbol
+                    )
+                    _cycle_stats["blocked_longs"] += 1
+                    _last_result[key] = False
+                    _pending.pop(key, None)
+                    continue
+                if regime == "Strong Bull" and direction == "SHORT":
+                    logger.info(
+                        "[REGIME BLOCK] %s SHORT blocked — BTC regime is BULL", symbol
+                    )
+                    _cycle_stats["blocked_shorts"] += 1
+                    _last_result[key] = False
+                    _pending.pop(key, None)
+                    continue
+                # Signal passed regime gate — count as allowed
+                if direction == "LONG":
+                    _cycle_stats["allowed_longs"] += 1
+                else:
+                    _cycle_stats["allowed_shorts"] += 1
+
+            if last:
+                # Second consecutive scan — fire confirmed alert
                 _pending.pop(key, None)
+                lev         = get_dynamic_leverage(adx_1h, symbol, direction)
+                sl_tp       = calc_sl_tp(price, direction, trend_strength, symbol)
+                dollar_risk = round(MARGIN_PER_TRADE * lev * SL_PCT, 2)
+                alert_data  = {
+                    "symbol":         symbol,
+                    "direction":      direction,
+                    "trend":          trend,
+                    "trend_strength": trend_strength,
+                    "trend_pill":     get_directional_trend_strength(adx_1h, trend),
+                    "adx":            round(adx_1h, 1),
+                    "rsi_1h":         round(rsi_1h, 1),
+                    "j1h":            j1h_clamped,
+                    "volume_ratio":   vol_ratio,
+                    "entry_price":    price,
+                    "margin":         MARGIN_PER_TRADE,
+                    "leverage":       lev,
+                    "dollar_risk":    dollar_risk,
+                    "score":          4,
+                    **sl_tp,
+                    "fired_at":                int(time.time()),
+                    "status":                  "",
+                    "scan_cycles_since_alert": 0,
+                    "conditions_snapshot": {
+                        "trend_pass": conds.get("trend_pass", True),
+                        "adx_pass":   conds.get("adx_pass",   True),
+                        "depth_pass": conds.get("depth_pass", True),
+                        "ma_pass":    conds.get("ma_pass",    True),
+                        "trend":      trend,
+                        "adx":        round(adx_1h, 1),
+                    },
+                }
+                alerts.append(alert_data)
                 _confirmed_at[key] = time.time()
+                _last_result[key]  = False  # reset so next scan starts fresh
+                logger.info(
+                    "[ALERT] %s %s CONFIRMED consecutive=2 adx=%.1f lev=%dx",
+                    symbol, direction, adx_1h, lev,
+                )
             else:
-                # First qualifying scan → mark as pending (awaiting reconfirmation)
+                # First qualifying scan — PENDING
                 _pending[key] = {
-                    "symbol": symbol,
-                    "direction": direction,
-                    "score": score,
-                    "trend": trend,
-                    "adx": round(adx_1h, 1),
-                    "rsi_5m": round(rsi_5m, 1),
-                    "rsi_1h": round(rsi_1h, 1),
+                    "symbol":     symbol,
+                    "direction":  direction,
+                    "trend":      trend,
+                    "adx":        round(adx_1h, 1),
+                    "rsi_1h":     round(rsi_1h, 1),
                     "first_seen": int(time.time()),
                 }
-            _prev_scores[key] = score
+                _last_result[key] = True
+                logger.info("[STATE] %s %s consecutive=1 state=PENDING", symbol, direction)
         else:
-            _prev_scores[key] = 0
+            _last_result[key] = False
             _pending.pop(key, None)
 
-    return {
-        "symbol": symbol,
-        "price": price,
-        "trend": trend,
-        "long_score": long_score,
-        "short_score": short_score,
-        "adx": round(adx_1h, 1),
-        "j5": round(max(0.0, min(100.0, j5)), 1),
-        "bid_pct": round(bid_pct, 1),
-        "ask_pct": round(ask_pct, 1),
-        "rsi_5m": round(rsi_5m, 1),
-        "rsi_1h": round(rsi_1h, 1),
-        "ma10": round(ma10, 4),
-        "ma30": round(ma30, 4),
-        "ma60": round(ma60, 4),
-        "alerts": alerts,
-        "signal_state": _get_signal_state(symbol),
-        "gates_status": compute_gates_status(trend, adx_1h, bid_pct, ask_pct, j5),
-        "scanned_at": int(time.time()),
+    walls   = compute_walls(orderbook, price, symbol)
+    ma_data = {
+        "timeframes": {
+            "5m":  compute_ma_data(df_5m,  price),
+            "15m": compute_ma_data(df_15m, price),
+            "1h":  compute_ma_data(df_1h,  price),
+        }
     }
 
-
-async def run_universe_scan(client: HLClient, open_trade_symbols: set) -> None:
-    """Universe scanner: fetch all HL perps, filter by volume/OI/funding, rank by
-    ADX + trend + depth, fill promoted slots.  Runs every UNIVERSE_SCAN_INTERVAL_MINUTES
-    as an independent background task — never touches the TC scan loop."""
-    try:
-        # Step 1 — fetch all HL pairs
-        universe = await client.get_universe_metadata()
-        if not universe:
-            logger.warning("[UNIVERSE] metadata fetch returned empty — will retry next interval")
-            return
-
-        fixed_set    = set(PAIRS)
-        promoted_set = set(_promoted_pairs.keys())
-        _universe_state["total_pairs_scanned"] = len(universe)
-        candidates = [p for p in universe
-                      if p["symbol"] not in fixed_set and p["symbol"] not in promoted_set]
-
-        # Step 2 — filter
-        vol_threshold = UNIVERSE_VOLUME_MIN_USD
-
-        def _passes(p: dict, vol_min: float) -> bool:
-            return (p["volume_24h_usd"] >= vol_min
-                    and p["open_interest_usd"] >= UNIVERSE_OI_MIN_USD
-                    and abs(p["funding_rate"]) >= UNIVERSE_FUNDING_MIN_ABS)
-
-        filtered = [p for p in candidates if _passes(p, vol_threshold)]
-        relaxed = False
-        if len(filtered) < 5:
-            vol_threshold *= UNIVERSE_VOLUME_FALLBACK_MULTIPLIER
-            filtered = [p for p in candidates if _passes(p, vol_threshold)]
-            relaxed = True
-
-        _universe_state["pairs_surviving_filter"] = len(filtered)
-        logger.info("[UNIVERSE] %d candidates after filter%s",
-                    len(filtered), " (volume relaxed)" if relaxed else "")
-
-        if not filtered:
-            _universe_state["last_scan_at"] = int(time.time())
-            return
-
-        # Step 3 — rank survivors (ADX 0-3 + trend clarity 0-2 + depth imbalance 0-2)
-        async def _score(p: dict) -> Optional[dict]:
-            try:
-                candles_1h, ob = await asyncio.gather(
-                    client.get_candles(p["symbol"], "1h", 80),
-                    client.get_orderbook(p["symbol"], 20),
-                )
-                if not candles_1h:
-                    return None
-                df_1h = pd.DataFrame(candles_1h)
-                adx   = compute_adx(df_1h, 14)
-                trend = classify_trend(df_1h)
-                bid_pct, ask_pct = compute_depth_pcts(ob)
-
-                sc = 0
-                if adx >= 60:   sc += 3
-                elif adx >= 40: sc += 2
-                elif adx >= 30: sc += 1
-
-                if trend in ("Strong Bull", "Strong Bear"):
-                    sc += 2
-
-                max_depth = max(bid_pct, ask_pct)
-                if max_depth >= 65:   sc += 2
-                elif max_depth >= 55: sc += 1
-
-                return {**p, "universe_score": sc, "adx": round(adx, 1), "trend": trend}
-            except Exception as exc:
-                logger.debug("[UNIVERSE] _score %s error: %s", p["symbol"], exc)
-                return None
-
-        raw = await asyncio.gather(*[_score(p) for p in filtered], return_exceptions=True)
-        scored = sorted(
-            [r for r in raw if isinstance(r, dict)],
-            key=lambda x: x["universe_score"],
-            reverse=True,
-        )
-        _universe_state["last_candidates"] = [
-            {"symbol": c["symbol"], "score": c["universe_score"]} for c in scored[:10]
-        ]
-
-        # Step 4 — evict expired slots (skip if active trade or in cooldown)
-        now = time.time()
-        to_evict: list[tuple[str, int]] = []
-        for sym, entry in _promoted_pairs.items():
-            if sym in open_trade_symbols:
-                continue
-            if _in_cooldown(f"{sym}LONG") or _in_cooldown(f"{sym}SHORT"):
-                continue
-            if now > entry["rotation_expires_at"]:
-                to_evict.append((sym, entry["slot_number"]))
-
-        for sym, slot in to_evict:
-            logger.info("[UNIVERSE] %s evicted from slot %d (rotation window expired)", sym, slot)
-            del _promoted_pairs[sym]
-
-        # Fill empty slots
-        used_slots  = {e["slot_number"] for e in _promoted_pairs.values()}
-        empty_slots = sorted(s for s in range(1, PROMOTED_SLOTS + 1) if s not in used_slots)
-        now_promoted = set(_promoted_pairs.keys())
-
-        for candidate in scored:
-            if not empty_slots:
-                break
-            sym = candidate["symbol"]
-            if sym in now_promoted or sym in fixed_set:
-                continue
-            slot = empty_slots.pop(0)
-            _promoted_pairs[sym] = {
-                "symbol": sym,
-                "slot_number": slot,
-                "promoted_at": int(now),
-                "universe_score": candidate["universe_score"],
-                "rotation_expires_at": int(now + ROTATION_WINDOW_MINUTES * 60),
-                "has_active_trade": False,
-            }
-            now_promoted.add(sym)
-            logger.info("[UNIVERSE] %s promoted to slot %d (score %d/7)",
-                        sym, slot, candidate["universe_score"])
-
-        _universe_state["last_scan_at"] = int(time.time())
-
-    except Exception as exc:
-        logger.error("[UNIVERSE] scan error: %s", exc)
-        _universe_state["last_scan_at"] = int(time.time())
+    _gs = compute_gates_status(
+        price, ma10, ma30, ma60, adx_1h, bid_pct, ask_pct, adx_min, j1h_clamped
+    )
+    result = {
+        "symbol":         symbol,
+        "price":          price,
+        "trend":          trend,
+        "trend_strength": trend_strength,
+        "trend_pill":     get_directional_trend_strength(adx_1h, trend),
+        "adx":            round(adx_1h, 1),
+        "j5":             j1h_clamped,   # kept as j5 for JS compatibility
+        "j_1h":           j1h_clamped,   # explicit alias
+        "j_5m":           j_5m,
+        "j_15m":          j_15m,
+        "funding_rate":   _funding_cache.get(symbol),
+        "bid_pct":        round(bid_pct, 1),
+        "ask_pct":        round(ask_pct, 1),
+        "bid_wall":       walls["bid_wall"],
+        "ask_wall":       walls["ask_wall"],
+        "change_24h":     change_24h,
+        "rsi_1h":         round(rsi_1h, 1),
+        "vol_ratio":      vol_ratio,
+        "ma10":           round(ma10, 4),
+        "ma30":           round(ma30, 4),
+        "ma60":           round(ma60, 4),
+        "ma_data":        ma_data,
+        "alerts":         alerts,
+        "gates_status":   _gs,
+        "gates_detail":   _build_gates_detail(
+            trend, adx_1h, bid_pct, ask_pct, j1h_clamped,
+            _gs.get("gates_direction", "LONG"),
+        ),
+        "scanned_at":     int(time.time()),
+    }
+    # Update per-symbol scan history (last 3 entries, best-direction result)
+    _j_pass     = _gs.get("j_pass", False)
+    _fail_reason = ""
+    for _gn, _gv in [
+        ("TREND", _gs.get("trend_pass")),
+        ("ADX",   _gs.get("adx_pass")),
+        ("DEPTH", _gs.get("depth_pass")),
+        ("J",     _j_pass),
+    ]:
+        if not _gv:
+            _fail_reason = _gn
+            break
+    if symbol not in _scan_history:
+        _scan_history[symbol] = []
+    _scan_history[symbol].insert(0, {
+        "trend_pass":    _gs.get("trend_pass", False),
+        "adx_pass":      _gs.get("adx_pass", False),
+        "depth_pass":    _gs.get("depth_pass", False),
+        "j_pass":        _j_pass,
+        "j_value":       j1h_clamped,
+        "reason_failed": _fail_reason,
+        "scanned_at":    int(time.time()),
+    })
+    _scan_history[symbol] = _scan_history[symbol][:3]
+    _last_known_good[symbol] = result
+    return result
 
 
 async def run_full_scan(client: HLClient) -> tuple[list[dict], list[dict]]:
-    all_symbols = list(PAIRS) + [s for s in _promoted_pairs if s not in PAIRS]
-    # Sequential with 0.5s delay between pairs — spaces 12 pairs over ~6s to prevent 429 bursts
+    """Returns (pair_states, new_alerts). Scans all pairs unconditionally."""
+    global _funding_cache
+    try:
+        meta_list = await client.get_universe_metadata()
+        _funding_cache = {m["symbol"]: m.get("funding_rate") for m in meta_list}
+        logger.info("[FUNDING] fetched rates for %d symbols", len(_funding_cache))
+    except Exception as e:
+        logger.warning("[FUNDING] metadata fetch failed: %s", e)
+
+    _cycle_stats["blocked_shorts"] = 0
+    _cycle_stats["blocked_longs"]  = 0
+    _cycle_stats["allowed_longs"]  = 0
+    _cycle_stats["allowed_shorts"] = 0
+
     results = []
-    for i, sym in enumerate(all_symbols):
+    for i, sym in enumerate(PAIRS):
         if i > 0:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
         try:
             result = await scan_pair(sym, client)
         except Exception as e:
             result = e
         results.append(result)
+
+    regime_label = (
+        "BULL"    if _btc_regime == "Strong Bull"
+        else "BEAR"    if _btc_regime == "Strong Bear"
+        else "NEUTRAL"
+    )
+    logger.info(
+        "[REGIME] current=%s blocked_shorts=%d allowed_longs=%d",
+        regime_label,
+        _cycle_stats["blocked_shorts"],
+        _cycle_stats["allowed_longs"],
+    )
 
     pair_states, new_alerts = [], []
     for result in results:
