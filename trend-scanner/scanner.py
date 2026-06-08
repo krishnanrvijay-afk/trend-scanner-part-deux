@@ -756,12 +756,12 @@ async def scan_pair(symbol: str, client: HLClient) -> dict:
 
         depth_val = ask_pct if direction == "SHORT" else bid_pct
         logger.info(
-            "[SCAN] %s %s trend=%s adx=%.1f %s depth=%.1f %s ma=%s signal=%s",
+            "[SCAN] %s %s trend=%s adx=%.1f %s depth=%.1f %s j(1h)=%.1f %s signal=%s",
             symbol, direction,
             "PASS" if conds["trend_pass"] else "FAIL",
             adx_1h, "PASS" if conds["adx_pass"] else "FAIL",
             depth_val, "PASS" if conds["depth_pass"] else "FAIL",
-            "PASS" if conds["ma_pass"] else "FAIL",
+            j_1h, "PASS" if conds["j_pass"] else "FAIL",
             "TRUE" if signal else "FALSE",
         )
 
